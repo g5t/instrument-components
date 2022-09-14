@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Tuple, Union
+from h5py import File, Group
+
 from .detectors import DiscreteTube
 from .crystals import IdealCrystal
 
@@ -23,6 +25,28 @@ class DirectSecondary:
         vector = self.final_vector(detector, element)
         v = vector_length(vector)
         return vector[0]/v, vector[1]/v, vector[2]/v
+
+    def add_to_hdf(self, obj: Union[File, Group]):
+        from numpy import vstack
+        s_detectors = vstack([d.serialize() for d in self.detectors])
+        group = obj.create_group('DirectSecondary')
+        group.attrs['py_class'] = 'DirectSecondary'
+        group.attrs['py_module'] = 'components'
+        group.attrs['sample_at'] = self.sample_at
+        group.create_dataset('detectors', s_detectors.shape, dtype=s_detectors.dtype)
+        group['detectors'][:] = s_detectors
+
+    @staticmethod
+    def from_hdf(obj: Group):
+        if not 'py_class' in obj.attrs:
+            raise RuntimeError("Expected group to have an attributed named 'py_class'")
+        if obj.attrs['py_class'] is not 'DirectSecondary':
+            raise RuntimeError(f"Expected attribute 'py_class' to be 'DirectSecondary' but got {obj.attrs['py_class']}")
+
+        detectors = DiscreteTube.deserialize(obj['detectors'])
+        sample_at = obj.attrs['sample_at']
+
+        return DirectSecondary(detectors, sample_at)
 
 
 @dataclass
@@ -96,3 +120,31 @@ class IndirectSecondary:
         _, _, _, _, la, lf, ld_n, _ = self._detector_partial_vectors(detector, element)
         return sqrt((la + lf) * (la + lf) + ld_n * ld_n)
 
+    def add_to_hdf(self, obj: Union[File, Group]):
+        from numpy import vstack
+        s_detectors = vstack([d.serialize() for d in self.detectors])
+        s_analyzers = vstack([a.serialize() for a in self.analyzers])
+        group = obj.create_group('IndirectSecondary')
+        group.attrs['py_class'] = 'IndirectSecondary'
+        group.attrs['py_module'] = 'components'
+        group.attrs['sample_at'] = self.sample_at
+        group.create_dataset('detectors', s_detectors.shape, dtype=s_detectors.dtype)
+        group.create_dataset('analyzers', s_analyzers.shape, dtype=s_analyzers.dtype)
+        group.create_dataset('analyzer_per_detector', (len(self.analyzer_per_detector),), dtype='<i4')
+        group['detectors'][:] = s_detectors
+        group['analyzers'][:] = s_analyzers
+        group['analyzer_per_detector'][:] = self.analyzer_per_detector
+
+    @staticmethod
+    def from_hdf(obj: Group):
+        if not 'py_class' in obj.attrs:
+            raise RuntimeError("Expected group to have an attributed named 'py_class'")
+        if obj.attrs['py_class'] is not 'IndirectSecondary':
+            raise RuntimeError(f"Expected attribute 'py_class' to be 'IndirectSecondary' but got {obj.attrs['py_class']}")
+
+        detectors = DiscreteTube.deserialize(obj['detectors'])
+        analyzers = IdealCrystal.deserialize(obj['analyzers'])
+        analyzer_per_detector = list(obj['analyzer_per_detector'])
+        sample_at = obj.attrs['sample_at']
+
+        return IndirectSecondary(detectors, analyzers, analyzer_per_detector, sample_at)

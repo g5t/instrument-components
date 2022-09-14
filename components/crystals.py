@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Tuple
+from numpy import ndarray
 
 
 @dataclass
@@ -45,9 +46,66 @@ class IdealCrystal:
     def transmission(self, *a, **k) -> float:
         return 1.
 
+    @staticmethod
+    def _serialize_types():
+        from numpy import dtype
+        return dtype([(n, 'f4') for n in ('pos0', 'pos1', 'pos2', 'tau0', 'tau1', 'tau2')])
+
+    @property
+    def _serialize_data(self):
+        from numpy import hstack
+        return hstack(self.position, self.tau)
+
+    def serialize(self):
+        from numpy.lib.recfunctions import unstructured_to_structured as u2s
+        return u2s(self._serialize_data, self._serialize_types())
+
+    @staticmethod
+    def deserialize(structured: ndarray):
+        dt = IdealCrystal._serialize_types()
+        if structured.dtype != dt:
+            raise RuntimeError(f"Expected types {dt} but provided with {structured.dtype}")
+        if structured.size > 1:
+            poss = [(s['pos0'], s['pos1'], s['pos2']) for s in structured]
+            taus = [(s['tau0'], s['tau1'], s['tau2']) for s in structured]
+            return [IdealCrystal(pos, tau) for pos, tau in zip(poss, taus)]
+        pos = structured['pos0'], structured['pos1'], structured['pos2']
+        tau = structured['tau0'], structured['tau1'], structured['tau2']
+        return IdealCrystal(pos, tau)
+
 
 @dataclass
-class Crystal:
+class Crystal(IdealCrystal):
     width: float   # length in the scattering plane, perpendicular to Q
     height: float  # length perpendicular to the scattering plane
     depth: float   # length along Q
+
+    @staticmethod
+    def _serialize_types():
+        from numpy import dtype
+        t = super()._serialize_types().descr
+        t.extend([(x, 'f4') for x in ('width', 'height', 'depth')])
+        return dtype(t)
+
+    @property
+    def _serialize_data(self):
+        from numpy import hstack
+        return hstack((super(self)._serialize_data, (self.width, self.height, self.depth)))
+
+    @staticmethod
+    def deserialize(structured: ndarray):
+        dt = Crystal._serialize_types()
+        if structured.dtype != dt:
+            raise RuntimeError(f"Expected types {dt} but provided with {structured.dtype}")
+        if structured.size > 1:
+            poss = [(s['pos0'], s['pos1'], s['pos2']) for s in structured]
+            taus = [(s['tau0'], s['tau1'], s['tau2']) for s in structured]
+            widths = [s['width'] for s in structured]
+            heights = [s['height'] for s in structured]
+            depths = [s['depth'] for s in structured]
+            return [Crystal(*pack) for *pack in zip(poss, taus, widths, heights, depths)]
+        pos = structured['pos0'], structured['pos1'], structured['pos2']
+        tau = structured['tau0'], structured['tau1'], structured['tau2']
+        return Crystal(pos, tau, structured['width'], structured['height'], structured['depth'])
+
+
