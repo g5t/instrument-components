@@ -54,7 +54,7 @@ class IdealCrystal:
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack(self.position, self.tau)
+        return hstack((self.position, self.tau))
 
     def serialize(self):
         from numpy.lib.recfunctions import unstructured_to_structured as u2s
@@ -83,14 +83,14 @@ class Crystal(IdealCrystal):
     @staticmethod
     def _serialize_types():
         from numpy import dtype
-        t = super()._serialize_types().descr
+        t = super(Crystal, Crystal)._serialize_types().descr
         t.extend([(x, 'f4') for x in ('width', 'height', 'depth')])
         return dtype(t)
 
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack((super(self)._serialize_data, (self.width, self.height, self.depth)))
+        return hstack((super()._serialize_data, (self.width, self.height, self.depth)))
 
     @staticmethod
     def deserialize(structured: ndarray):
@@ -103,7 +103,7 @@ class Crystal(IdealCrystal):
             widths = [s['width'] for s in structured]
             heights = [s['height'] for s in structured]
             depths = [s['depth'] for s in structured]
-            return [Crystal(*pack) for *pack in zip(poss, taus, widths, heights, depths)]
+            return [Crystal(*pack) for pack in zip(poss, taus, widths, heights, depths)]
         pos = structured['pos0'], structured['pos1'], structured['pos2']
         tau = structured['tau0'], structured['tau1'], structured['tau2']
         return Crystal(pos, tau, structured['width'], structured['height'], structured['depth'])

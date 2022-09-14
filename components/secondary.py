@@ -9,10 +9,21 @@ def vector_length(vector: Tuple[float, float, float]) -> float:
     from math import sqrt
     return sqrt(vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2])
 
+
+def serialize_to(g, name, what):
+    from numpy import vstack
+    ser = vstack([x.serialize() for x in what])
+    g.create_dataset(name, data=ser)
+    g[name].attrs['py_class'] = type(what[0]).__name__
+
 @dataclass
 class DirectSecondary:
-    detectors: List[DiscreteTube, ...]
+    detectors: List[DiscreteTube]
     sample_at: Tuple[float, float, float] = field(default_factory=lambda: (0., 0., 0.))
+
+    def __post_init__(self):
+        if any([not isinstance(x, DiscreteTube) for x in self.detectors]):
+            raise RuntimeError("DiscreteTube detectors expected")
 
     def final_vector(self, detector: int, element: int) -> Tuple[float, float, float]:
         p = self.detectors[detector].index_position(element)
@@ -27,21 +38,24 @@ class DirectSecondary:
         return vector[0]/v, vector[1]/v, vector[2]/v
 
     def add_to_hdf(self, obj: Union[File, Group]):
-        from numpy import vstack
-        s_detectors = vstack([d.serialize() for d in self.detectors])
         group = obj.create_group('DirectSecondary')
         group.attrs['py_class'] = 'DirectSecondary'
         group.attrs['py_module'] = 'components'
         group.attrs['sample_at'] = self.sample_at
-        group.create_dataset('detectors', s_detectors.shape, dtype=s_detectors.dtype)
-        group['detectors'][:] = s_detectors
+        serialize_to(group, 'detectors', self.detectors)
 
     @staticmethod
     def from_hdf(obj: Group):
         if not 'py_class' in obj.attrs:
-            raise RuntimeError("Expected group to have an attributed named 'py_class'")
-        if obj.attrs['py_class'] is not 'DirectSecondary':
+            raise RuntimeError("Expected group to have an attribute named 'py_class'")
+        if obj.attrs['py_class'] != 'DirectSecondary':
             raise RuntimeError(f"Expected attribute 'py_class' to be 'DirectSecondary' but got {obj.attrs['py_class']}")
+        if 'detectors' not in obj:
+            raise RuntimeError("Expected 'detectors' group in provided HDF5 group")
+        if 'py_class' not in obj['detectors'].attrs:
+            raise RuntimeError("Expected detectors group to have an attribute named 'py_class'")
+        if obj['detectors'].attrs['py_class'] != 'DiscreteTube':
+            raise RuntimeError(f"Expected detectors to be 'DiscreteTube' but got {obj['detectors'].attrs['py_class']}")
 
         detectors = DiscreteTube.deserialize(obj['detectors'])
         sample_at = obj.attrs['sample_at']
@@ -51,9 +65,9 @@ class DirectSecondary:
 
 @dataclass
 class IndirectSecondary:
-    detectors: List[DiscreteTube, ...]
-    analyzers: List[IdealCrystal, ...]
-    analyzer_per_detector: List[int, ...]
+    detectors: List[DiscreteTube]
+    analyzers: List[IdealCrystal]
+    analyzer_per_detector: List[int]
     sample_at: Tuple[float, float, float] = field(default_factory=lambda: (0., 0., 0.))
 
     def __post_init__(self):
@@ -63,6 +77,10 @@ class IndirectSecondary:
             raise RuntimeError("The detector-to-analyzer map must have one entry per detector")
         if any((x < 0 or x > n_ana for x in self.analyzer_per_detector)):
             raise RuntimeError("The analyzer index for each detector must be valid")
+        if any([not isinstance(x, DiscreteTube) for x in self.detectors]):
+            raise RuntimeError("DiscreteTube detectors expected")
+        if any([not isinstance(x, IdealCrystal) for x in self.analyzers]):
+            raise RuntimeError("IdealCrystal analyzers expected")
 
     def scattering_plane_normal(self, analyzer) -> Tuple[float, float, float]:
         tau = self.analyzers[analyzer].tau  # points into the scattering plane
@@ -121,26 +139,34 @@ class IndirectSecondary:
         return sqrt((la + lf) * (la + lf) + ld_n * ld_n)
 
     def add_to_hdf(self, obj: Union[File, Group]):
-        from numpy import vstack
-        s_detectors = vstack([d.serialize() for d in self.detectors])
-        s_analyzers = vstack([a.serialize() for a in self.analyzers])
         group = obj.create_group('IndirectSecondary')
         group.attrs['py_class'] = 'IndirectSecondary'
         group.attrs['py_module'] = 'components'
         group.attrs['sample_at'] = self.sample_at
-        group.create_dataset('detectors', s_detectors.shape, dtype=s_detectors.dtype)
-        group.create_dataset('analyzers', s_analyzers.shape, dtype=s_analyzers.dtype)
-        group.create_dataset('analyzer_per_detector', (len(self.analyzer_per_detector),), dtype='<i4')
-        group['detectors'][:] = s_detectors
-        group['analyzers'][:] = s_analyzers
-        group['analyzer_per_detector'][:] = self.analyzer_per_detector
+        serialize_to(group, 'detectors', self.detectors)
+        serialize_to(group, 'analyzers', self.analyzers)
+        group.create_dataset('analyzer_per_detector', data=self.analyzer_per_detector, dtype='<i4')
 
     @staticmethod
     def from_hdf(obj: Group):
         if not 'py_class' in obj.attrs:
             raise RuntimeError("Expected group to have an attributed named 'py_class'")
-        if obj.attrs['py_class'] is not 'IndirectSecondary':
+        if obj.attrs['py_class'] != 'IndirectSecondary':
             raise RuntimeError(f"Expected attribute 'py_class' to be 'IndirectSecondary' but got {obj.attrs['py_class']}")
+
+        if 'detectors' not in obj:
+            raise RuntimeError("Expected 'detectors' group in provided HDF5 group")
+        if 'py_class' not in obj['detectors'].attrs:
+            raise RuntimeError("Expected detectors group to have an attribute named 'py_class'")
+        if obj['detectors'].attrs['py_class'] != 'DiscreteTube':
+            raise RuntimeError(f"Expected detectors to be 'DiscreteTube' but got {obj['detectors'].attrs['py_class']}")
+
+        if 'analyzers' not in obj:
+            raise RuntimeError("Expected 'analyzers' group in provided HDF5 group")
+        if 'py_class' not in obj['analyzers'].attrs:
+            raise RuntimeError("Expected analyzers group to have an attribute named 'py_class'")
+        if obj['analyzers'].attrs['py_class'] != 'IdealCrystal':
+            raise RuntimeError(f"Expected analyzers to be 'IdealCrystal' but got {obj['analyzers'].attrs['py_class']}")
 
         detectors = DiscreteTube.deserialize(obj['detectors'])
         analyzers = IdealCrystal.deserialize(obj['analyzers'])

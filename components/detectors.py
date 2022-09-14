@@ -30,7 +30,7 @@ class Wire:
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack(self.at, self.to)
+        return hstack((self.at, self.to))
 
     def serialize(self):
         from numpy.lib.recfunctions import unstructured_to_structured as u2s
@@ -83,14 +83,14 @@ class DiscreteWire(Wire):
     @staticmethod
     def _serialize_types():
         from numpy import dtype
-        t = super()._serialize_types().descr
+        t = super(DiscreteWire, DiscreteWire)._serialize_types().descr
         t.append(('elements', '<i4'))  # little-endian 32-bit signed integer
         return dtype(t)
 
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack((super(self)._serialize_data, (self.elements,)))
+        return hstack((super()._serialize_data, (self.elements,)))
 
     @staticmethod
     def deserialize(structured: ndarray):
@@ -114,12 +114,12 @@ class DiscreteTube(DiscreteWire):
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack((super(self)._serialize_data, (self.radius, )))
+        return hstack((super()._serialize_data, (self.radius, )))
 
     @staticmethod
     def _serialize_types():
         from numpy import dtype
-        t = super()._serialize_types().descr
+        t = super(DiscreteTube, DiscreteTube)._serialize_types().descr
         t.append(('radius', 'f4'))
         return dtype(t)
 
@@ -146,12 +146,12 @@ class He3Tube(DiscreteTube):
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack((super(self)._serialize_data, (self.pressure,)))
+        return hstack((super()._serialize_data, (self.pressure,)))
 
     @staticmethod
     def _serialize_types():
         from numpy import dtype
-        t = super()._serialize_types().descr
+        t = super(He3Tube, He3Tube)._serialize_types().descr
         t.append(('pressure', 'f4'))
         return dtype(t)
 
