@@ -1,29 +1,40 @@
 from dataclasses import dataclass
 from typing import Tuple
 from numpy import ndarray
+from scipp import Variable
+from scipp.DType import vector3
+from .serialize import vector_deserialize, vector_serialize_types
 
 
 @dataclass
 class IdealCrystal:
-    position: Tuple[float, float, float]
-    tau: Tuple[float, float, float]
+    position: Variable
+    tau: Variable
+    
+    def __post_init__(self):
+        from scipp.DType import vector3
+        if position.dtype != vector3:
+            raise RuntimeError("position must be of type scipp.DType('vector3')")
+        if tau.dtype != vector3:
+            raise RuntimeError("tau must be of type scipp.DType('vector3')")
 
     @property
-    def momentum(self) -> float:
-        from math import sqrt
-        return sqrt(sum([t*t for t in self.tau]))
+    def momentum(self) -> Variable:
+        from scipp import sqrt, dot
+        return sqrt(dot(self.tau, self.tau))
 
     @property
-    def momentum_vector(self) -> Tuple[float, float, float]:
-        return -self.tau[0], -self.tau[1], -self.tau[2]
+    def momentum_vector(self) -> Variable:
+        return -self.tau
 
     @property
-    def plane_spacing(self) -> float:
+    def plane_spacing(self) -> Variable
         from math import pi
         return 2 * pi / self.momentum
 
-    def scattering_angle_rad(self, *, wavelength=None, wavenumber=None, k=None) -> float:
-        from math import pi, asin
+    def scattering_angle(self, *, wavelength=None, wavenumber=None, k=None) -> Variable:
+        from math import pi
+        from scipp import asin
         if wavenumber is not None and k is not None and wavenumber != k:
             raise RuntimeError("k == wavenumber; Do not provide both")
         if wavenumber is not None and k is None:
@@ -34,11 +45,8 @@ class IdealCrystal:
             k = 2 * pi / wavelength
         if k is None:
             raise RuntimeError("wavelength or wavenumber must be provided")
-        return 2 * asin(self.momentum / (2 * k))
 
-    def scattering_angle_deg(self, **kwargs):
-        from math import pi
-        return self.scattering_angle_rad(**kwargs) * 180 / pi
+        return 2 * asin(self.momentum / (2 * k.to(unit=self.tau.unit)))
 
     def reflectivity(self, *a, **k) -> float:
         return 1.
@@ -48,64 +56,65 @@ class IdealCrystal:
 
     @staticmethod
     def _serialize_types():
-        from numpy import dtype
-        return dtype([(n, 'f4') for n in ('pos0', 'pos1', 'pos2', 'tau0', 'tau1', 'tau2')])
+        pairs = list(vector_serialize_types(self.position, name='position', dtype='f4'))
+        pairs.extend(list(vector_serialize_types(self.tau, name='tau', dtype='f4'))
+        return pairs
 
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack((self.position, self.tau))
+        return hstack((self.position.values, self.tau.values))
 
     def serialize(self):
         from numpy.lib.recfunctions import unstructured_to_structured as u2s
-        return u2s(self._serialize_data, self._serialize_types())
+        from numpy import dtype
+        return u2s(self._serialize_data, dtype(self._serialize_types()))
 
     @staticmethod
     def deserialize(structured: ndarray):
+        from numpy import dtype
         dt = IdealCrystal._serialize_types()
-        if structured.dtype != dt:
+        if structured.dtype != dtype(dt):
             raise RuntimeError(f"Expected types {dt} but provided with {structured.dtype}")
-        if structured.size > 1:
-            poss = [(s['pos0'], s['pos1'], s['pos2']) for s in structured]
-            taus = [(s['tau0'], s['tau1'], s['tau2']) for s in structured]
-            return [IdealCrystal(pos, tau) for pos, tau in zip(poss, taus)]
-        pos = structured['pos0'], structured['pos1'], structured['pos2']
-        tau = structured['tau0'], structured['tau1'], structured['tau2']
-        return IdealCrystal(pos, tau)
+        dim = 'crystals'
+        pos = vector_deserialize(structured, 'position', dim=dim)
+        tau = vector_deserialize(structured, 'tau', dim=dim)
+        out = [IdealCrystal(*pack) for pack in zip(pos, tau)]
+        return out[0] if len(out) == 1 else out
 
 
 @dataclass
 class Crystal(IdealCrystal):
-    width: float   # length in the scattering plane, perpendicular to Q
-    height: float  # length perpendicular to the scattering plane
-    depth: float   # length along Q
+    shape: Variable # lengths: (in-scattering-plane perpendicular to Q, perpendicular to plane, along Q)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if shape.dtype != vector3:
+            raise RuntimeError("shape must be of type scipp.DType('vector3')")
 
     @staticmethod
     def _serialize_types():
-        from numpy import dtype
-        t = super(Crystal, Crystal)._serialize_types().descr
-        t.extend([(x, 'f4') for x in ('width', 'height', 'depth')])
-        return dtype(t)
+        types = super(Crystal, Crystal)._serialize_types()
+        types.extend(vector_serialize_types(self.shape, 'shape', dtype='f4'))
+        return types
 
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack((super()._serialize_data, (self.width, self.height, self.depth)))
+        return hstack((super()._serialize_data, self.shape.values))
 
     @staticmethod
     def deserialize(structured: ndarray):
+        from numpy import dtype
         dt = Crystal._serialize_types()
-        if structured.dtype != dt:
+        if structured.dtype != dtype(dt):
             raise RuntimeError(f"Expected types {dt} but provided with {structured.dtype}")
-        if structured.size > 1:
-            poss = [(s['pos0'], s['pos1'], s['pos2']) for s in structured]
-            taus = [(s['tau0'], s['tau1'], s['tau2']) for s in structured]
-            widths = [s['width'] for s in structured]
-            heights = [s['height'] for s in structured]
-            depths = [s['depth'] for s in structured]
-            return [Crystal(*pack) for pack in zip(poss, taus, widths, heights, depths)]
-        pos = structured['pos0'], structured['pos1'], structured['pos2']
-        tau = structured['tau0'], structured['tau1'], structured['tau2']
-        return Crystal(pos, tau, structured['width'], structured['height'], structured['depth'])
+        dim = 'crystals'
+        pos = vector_deserialize(structured, 'position', dim=dim)
+        tau = vector_deserialize(structured, 'tau', dim=dim)
+        shape = vector_deserialize(structured, 'shape', dim=dim)
+        out = [Crystal(*pack) for pack in zip(pos, tau, shape)]
+        return out[0] if len(out) == 1 else out
+
 
 
