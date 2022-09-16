@@ -137,7 +137,7 @@ class DiscreteTube(DiscreteWire):
     radius: float
 
     def __eq__(self, other):
-        if not isinstance(other, DiscreteTube) and not issubclass(other, DiscreteTube):
+        if not isinstance(other, DiscreteTube):
             return False
         return self.radius == other.radius and super().__eq__(other)
 
@@ -168,7 +168,7 @@ class He3Tube(DiscreteTube):
     pressure: float
 
     def __eq__(self, other):
-        if not isinstance(other, He3Tube) and not issubclass(other, He3Tube):
+        if not isinstance(other, He3Tube):
             return False
         return self.pressure == other.pressure and super().__eq__(other)
 

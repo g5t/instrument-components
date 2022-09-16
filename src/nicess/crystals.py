@@ -8,6 +8,17 @@ from .serialize import vector_deserialize, vector_serialize_types
 class IdealCrystal:
     position: Variable
     tau: Variable
+
+    def __eq__(self, other):
+        if not isinstance(other, IdealCrystal):
+            return False
+        return self.position == other.position and self.tau == other.tau
+
+    def approx(self, other):
+        from scipp import allclose
+        if not isinstance(other, IdealCrystal):
+            return False
+        return allclose(self.position, other.position) and allclose(self.tau, other.tau)
     
     def __post_init__(self):
         from scipp import DType
@@ -43,6 +54,10 @@ class IdealCrystal:
             raise RuntimeError(f"Bragg scattering from |Q|={t:c} planes is not possible for k={k:c}")
         return 2 * asin(t / (2 * k))
 
+    def wavenumber(self, scattering_angle: Variable):
+        from scipp import sin
+        return self.momentum / (2 * sin(0.5 * scattering_angle.to(unit='radian')))
+
     def reflectivity(self, *a, **k) -> float:
         return 1.
 
@@ -76,7 +91,18 @@ class IdealCrystal:
 
 @dataclass
 class Crystal(IdealCrystal):
-    shape: Variable # lengths: (in-scattering-plane perpendicular to Q, perpendicular to plane, along Q)
+    shape: Variable  # lengths: (in-scattering-plane perpendicular to Q, perpendicular to plane, along Q)
+
+    def __eq__(self, other):
+        if not isinstance(other, Crystal):
+            return False
+        return self.shape == other.shape and super().__eq__(other)
+
+    def approx(self, other):
+        from scipp import allclose
+        if not isinstance(other, Crystal):
+            return False
+        return allclose(self.shape, other.shape) and super().approx(other)
 
     def __post_init__(self):
         from scipp import DType
