@@ -9,6 +9,29 @@ class IdealCrystal:
     position: Variable
     tau: Variable
 
+    def threejs_children(self, material=None, unit=None):
+        from scipp import sqrt, dot, vector
+        from .spatial import pythreejs_vector_to_vector_quaternion
+        from pythreejs import Mesh, SphereGeometry, ConeGeometry, CylinderGeometry
+        if material is None:
+            from pythreejs import MeshLambertMaterial
+            material = MeshLambertMaterial(color='red')
+        if unit is None:
+            unit = 'm'
+        com = Mesh(geometry=SphereGeometry(radius=2, widthSegments=32, heightSegments=32),
+                   material=material, position=self.position.to(unit=unit).value)
+
+        length = sqrt(dot(self.tau, self.tau))
+        Q = pythreejs_vector_to_vector_quaternion(vector([0, 0, 1.]), self.tau)
+
+        shaft_geom = CylinderGeometry(radiusTop=1, radiusBottom=1, height=length.value,
+                                 radialSegments=32, heightSegments=1, openEnded=True)
+        head_geom = ConeGeometry(radialSegments=32, radius=2, height=0.1*length.value)
+
+
+
+
+
     def __eq__(self, other):
         if not isinstance(other, IdealCrystal):
             return False
@@ -78,7 +101,8 @@ class IdealCrystal:
     def serialize(self):
         from numpy.lib.recfunctions import unstructured_to_structured as u2s
         from numpy import dtype
-        return u2s(self._serialize_data, dtype(self._serialize_types))
+        t = self._serialize_types()  # why does this need to be called? it is supposed to be a property
+        return u2s(self._serialize_data, dtype(t))
 
     @staticmethod
     def deserialize(structured: ndarray):

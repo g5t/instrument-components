@@ -5,7 +5,7 @@ from scipp import Variable, vector
 
 from .detectors import DiscreteTube
 from .crystals import IdealCrystal
-from .serialize import vector_serialize_types, vector_deserialize, vector_serialize
+from .serialize import vector_serialize_types, vector_deserialize, vector_serialize, deserialize_valid_class
 
 
 def serialize_to(g, name, what):
@@ -68,7 +68,7 @@ class DirectSecondary:
             raise RuntimeError("Expected 'detectors' group in provided HDF5 group")
         if 'py_class' not in obj['detectors'].attrs:
             raise RuntimeError("Expected detectors group to have an attribute named 'py_class'")
-        if obj['detectors'].attrs['py_class'] != 'DiscreteTube':
+        if not deserialize_valid_class(obj['detectors'], DiscreteTube):
             raise RuntimeError(f"Expected detectors to be 'DiscreteTube' but got {obj['detectors'].attrs['py_class']}")
 
         if 'sample' not in obj:
@@ -86,6 +86,29 @@ class IndirectSecondary:
     analyzers: List[IdealCrystal]
     analyzer_per_detector: List[int]
     sample_at: Variable = field(default_factory=lambda: vector([0., 0., 0.], unit='m'))
+
+    def __eq__(self, other):
+        if not isinstance(other, IndirectSecondary):
+            return False
+        if self.sample_at != other.sample_at:
+            return False
+        if not all(sd == od for sd, od in zip(self.detectors, other.detectors)):
+            return False
+        if not all(sa == oa for sa, oa in zip(self.analyzers, other.analyzers)):
+            return False
+        return all(sad == oad for sad, oad in zip(self.analyzer_per_detector, other.analyzer_per_detector))
+
+    def approx(self, other):
+        from scipp import allclose
+        if not isinstance(other, IndirectSecondary):
+            return False
+        if not allclose(self.sample_at, other.sample_at):
+            return False
+        if not all(sd.approx(od) for sd, od in zip(self.detectors, other.detectors)):
+            return False
+        if not all(sa.approx(oa) for sa, oa in zip(self.analyzers, other.analyzers)):
+            return False
+        return all(sad == oad for sad, oad in zip(self.analyzer_per_detector, other.analyzer_per_detector))
 
     def __post_init__(self):
         from scipp import DType
@@ -183,14 +206,14 @@ class IndirectSecondary:
             raise RuntimeError("Expected 'detectors' group in provided HDF5 group")
         if 'py_class' not in obj['detectors'].attrs:
             raise RuntimeError("Expected detectors group to have an attribute named 'py_class'")
-        if obj['detectors'].attrs['py_class'] != 'DiscreteTube':
+        if not deserialize_valid_class(obj['detectors'], DiscreteTube):
             raise RuntimeError(f"Expected detectors to be 'DiscreteTube' but got {obj['detectors'].attrs['py_class']}")
 
         if 'analyzers' not in obj:
             raise RuntimeError("Expected 'analyzers' group in provided HDF5 group")
         if 'py_class' not in obj['analyzers'].attrs:
             raise RuntimeError("Expected analyzers group to have an attribute named 'py_class'")
-        if obj['analyzers'].attrs['py_class'] != 'IdealCrystal':
+        if not deserialize_valid_class(obj['analyzers'], IdealCrystal):
             raise RuntimeError(f"Expected analyzers to be 'IdealCrystal' but got {obj['analyzers'].attrs['py_class']}")
 
         if 'sample' not in obj:

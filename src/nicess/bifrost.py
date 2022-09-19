@@ -20,9 +20,19 @@ def __is_type__(x, t, name):
 
 
 @dataclass
-class MinimalBIFROST:
+class BIFROST:
     # primary: BandwidthPrimary   # A minimal form of the primary spectrometer necessary to transform events
     secondary: IndirectSecondary  # A minimal form of the secondary spectrometer necessary to transform events
+
+    @staticmethod
+    def from_calibration(**params):
+        # primary = ...
+        params['sample'] = params.get('sample', vector([0, 0, 0.], unit='m'))
+        tank = Tank.from_calibration(**params)
+
+        secondary = tank.to_secondary(sample=params['sample'])
+        return BIFROST(secondary)
+
 
 
 @dataclass
@@ -137,9 +147,12 @@ class Channel:
             'long': array(values=[2, 2, 2, 2, 2.0], unit='mm', dims=['analyzer']),
         }
         known_d_spacings = {
-            'short': vectors(values=[[20.,0,0], [20.,0,0], [20.,0,0], [20.,0,0], [20.,0,0]], unit='mm', dims=['analyzer']),
-            'symmetric': vectors(values=[[20.,0,0], [20.,0,0], [20.,0,0], [20.,0,0], [20.,0,0]], unit='mm', dims=['analyzer']),
-            'long': vectors(values=[[20.,0,0], [20.,0,0], [20.,0,0], [20.,0,0], [20.,0,0]], unit='mm', dims=['analyzer']),
+            'short': vectors(
+                values=[[20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0]], unit='mm', dims=['analyzer']),
+            'symmetric': vectors(
+                values=[[20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0]], unit='mm', dims=['analyzer']),
+            'long': vectors(
+                values=[[20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0]], unit='mm', dims=['analyzer']),
         }
         counts = params.get('counts', [9, 9, 9, 7, 7])
         tau = params.get('tau', 2 * pi / params.get('dspacing', scalar(3.355, unit='angstrom')))  # PG(002)
@@ -158,7 +171,7 @@ class Channel:
 
         ks = (sqrt(energies * 2 * neutron_mass) / hbar).to(unit='1/angstrom')
         two_thetas = -2 * asin(0.5 * tau / ks)
-        rotations = rotations_from_rotvecs(rotation_vectors=two_thetas * vector([0, 0, 1], unit='1'))
+        rotations = rotations_from_rotvecs(rotation_vectors=two_thetas * vector([0, 1, 0], unit='1'))
         detector_vectors = rotations * (vector([1, 0, 0], unit='1') * dists_ad)
 
         relative_rotation = rotations_from_rotvecs(rotation_vectors=relative_angle * vector([0, 1, 0], unit='1'))
@@ -176,7 +189,7 @@ class Channel:
             analyzers.append(Analyzer.from_calibration(ap, dp, **params))
             detectors.append(Triplet.from_calibration(dp, dl, ds))
 
-        return Channel(analyzers, detectors)
+        return Channel(tuple(analyzers), tuple(detectors))
 
 
 @dataclass
@@ -191,9 +204,23 @@ class Tank:
         # but this can be overridden by specifying an integer-keyed dictionary with the parameters for each channel
         channel_params = params.get('channel_params', channel_params)
         # The central a4 angle for each channel, relative to the reference tank angle
-        angles = params.get('angles', array(values=[-40,-30,-20,-10,  0, 10, 20, 30, 40.], unit='degree', dims=['channel']))
+        angles = params.get('angles',
+                            array(values=[-40, -30, -20, -10,  0, 10, 20, 30, 40.], unit='degree', dims=['channel']))
 
-        channels = [Channel(angles[i], **channel_parmas[i]) for i in range(9)]
+        channels = [Channel.from_calibration(angles[i], **channel_params[i]) for i in range(9)]
         return Tank(tuple(channels))
 
+    def to_secondary(self, **params):
+        sample_at = params.get('sample', vector([0, 0, 0.], unit='m'))
+
+        detectors = []
+        analyzers = []
+        a_per_d = []
+        for channel in self.channels:
+            for analyzer, triplet in zip(channel.analyzers, channel.detectors):
+                analyzers.append(analyzer.central_blade)
+                detectors.extend(triplet.tubes)
+                a_per_d.extend([len(analyzers)-1 for _ in triplet.tubes])
+
+        return IndirectSecondary(detectors, analyzers, a_per_d, sample_at)
 

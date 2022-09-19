@@ -1,6 +1,7 @@
 from numpy import ndarray
 from scipp import Variable
 from typing import Tuple
+from h5py import Group
 
 def vector_serialize_types(v: Variable, name=None, dtype=None):
     from scipp import DType
@@ -8,7 +9,7 @@ def vector_serialize_types(v: Variable, name=None, dtype=None):
         raise RuntimeError("Only intended for scipp vector3 data")
     if name is None:
         name = ''
-    names = [f'{name}{index}/{v.unit.name}:{v.values.dtype}' for index in range(3)]
+    names = [f'{name}{index}:{v.unit.name}:{v.values.dtype}' for index in range(3)]
     if dtype is None:
         if str(v.values.dtype) == 'float64':
             dtype = 'f8'
@@ -25,7 +26,7 @@ def vector_deserialize(combination: ndarray, name: str, dim = None):
     from scipp import vector, vectors
     if dim is None:
         dim = 'stack'
-    rc = re.compile(rf'^{name}(?P<index>[0-2])/(?P<unit>.*):(?P<dtype>.*)$')
+    rc = re.compile(rf'^{name}(?P<index>[0-2]):(?P<unit>.*):(?P<dtype>.*)$')
     vnames = list(filter(lambda n: rc.match(n), combination.dtype.names))
     if len(vnames) != 3:
         raise RuntimeError(f"{len(vnames)} of 3 expected names found!")
@@ -56,3 +57,14 @@ def scalar_deserialize(combinatiton: ndarray, names: Tuple[str, ...]):
     scalars = [combinatiton[x].squeeze() for x in names]
     scalars = [x.item() if x.size == 1 else x for x in scalars]
     return scalars
+
+
+def deserialize_valid_class(group: Group, cls):
+    import sys
+    if 'py_class' not in group.attrs:
+        raise RuntimeError('The provided HDF5 group is not a serialized class object')
+    g_cls = group.attrs['py_class']
+    # get a handle to the `nicess` module
+    module = sys.modules[globals()['__package__']]
+    # and pull out the matching group name -- this will
+    return issubclass(getattr(module, g_cls), cls) if hasattr(module, g_cls) else False
