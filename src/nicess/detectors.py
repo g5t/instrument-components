@@ -135,6 +135,41 @@ class DiscreteWire(Wire):
 @dataclass
 class DiscreteTube(DiscreteWire):
     radius: float
+    
+    def triangulate(self, unit=None):
+        from .spatial import vector_to_vector_quaternion
+        from scipp import vector, vectors, sqrt, dot, isclose, cross, scalar, arange, concat, flatten
+        from scipp.spatial import rotations_from_rotvecs
+        if unit is None:
+            unit = self.at.unit
+        lvec = self.to.to(unit=unit) - self.at.to(unit=unit)
+        ll = sqrt(dot(lvec, lvec))
+        # *a* vector perpendicular to l
+        p = cross(lvec, vector([1., 0, 0]) if isclose(lvec.fields.z, ll) else vector([0, 0, 1.]))
+        p = p/sqrt(dot(p, p)) * scalar(self.radius, unit='mm').to(unit=unit)
+
+        a = arange(start=0, stop=360, step=30, dim='ring', unit='degree')
+        r = rotations_from_rotvecs(a*lvec/ll)
+
+        nvr = len(a)  # the number of vertices per ring
+        ring = r * p
+        li = self.at.to(unit=unit) + arange(start=0, stop=self.elements+1, dim='length') * lvec / self.elements
+        vertices = flatten(li + ring, to='vertices')  # the order in the addition is important for flatten
+        # 0, elements*[0,nvr), elements*nvr + 1
+        vertices = concat((self.at.to(unit=unit), vertices, self.to.to(unit=unit)), 'vertices')
+        # bottom cap
+        faces = [[0, i + 1, (i + 1) % nvr + 1] for i in range(nvr)]
+        # between rings
+        for j in range(self.elements):
+          z = 1 + j*nvr
+          rf = [[[z + i, z + (i + 1) % nvr, z + (i + 1) % nvr + nvr],
+                 [z + i, z + (i + 1) % nvr + nvr, z + i + nvr]] for i in range(nvr)]
+          faces.extend([triangle for triangles in rf for triangle in triangles])
+        # top cap
+        last = len(vertices) - 1
+        top = [[last, last - i - 1, last - (i + 1) % nvr -1] for i in range(nvr)]
+        faces.extend(top)
+        return vertices, faces
 
     def __eq__(self, other):
         if not isinstance(other, DiscreteTube):

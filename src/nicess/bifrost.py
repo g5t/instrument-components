@@ -8,7 +8,7 @@ from .detectors import He3Tube
 from .crystals import Crystal
 
 
-def __is__scipp_vector__(v: Variable, name: str):
+def is_scipp_vector(v: Variable, name: str):
     from scipp import DType
     if v.dtype != DType.vector3:
         raise RuntimeError(f"The {name} must be a scipp.DType('vector3')")
@@ -17,6 +17,38 @@ def __is__scipp_vector__(v: Variable, name: str):
 def __is_type__(x, t, name):
     if not isinstance(x, t):
         raise RuntimeError(f"{name} must be a {t}")
+
+
+def combine_triangulations(vts: list[tuple[Variable, list[list[int]]]]):
+  from scipp import concat
+  from numpy import cumsum, hstack
+  if any((v.ndim != 1 for v, t in vts)):
+    raise RuntimeError("All vertices expected to be 1-D lists of vectors")
+  vdims = [v.dims[0] for v, t in vts]
+  if any((d != vdims[0] for d in vdims)):
+    raise RuntimeError("All vertex arrays expected to have the same dimension name")
+  vdim = vdims[0]
+
+  lens = [len(v) for v, t in vts]
+  offset = hstack((0, cumsum(lens)))[:-1]
+  faces = [[off + i for i in t] for off, (v, ts) in zip(offset, vts) for t in ts]
+
+  vertices = concat([v for v, t in vts], dim=vdim)
+
+  return vertices, faces
+
+  
+def write_off_file(vertices, faces, filename):
+  stream = f"OFF\n{len(vertices)} {len(faces)} 0\n"
+  for v in vertices.values:
+    s = " ".join([f"{x:3.9f}" for x in v])
+    stream += s + "\n"
+  for v in faces:
+    s = " ".join([f"{x}" for x in v])
+    stream += f"{len(v)} {s}\n"
+  with open(filename, 'w') as f:
+    f.write(stream)
+
 
 
 @dataclass
@@ -44,10 +76,10 @@ class Triplet:
         """Take (fitting) calibration data and construct the object used to convert events to (Q,E)"""
         # The current crop of inputs is not sufficient to capture all degrees of freedom, but is a start.
         from scipp import sqrt, dot
-        map(lambda x: __is__scipp_vector__(*x), ((position, 'position'), (length, 'length'), (spacing, 'spacing')))
+        map(lambda x: is_scipp_vector(*x), ((position, 'position'), (length, 'length'), (spacing, 'spacing')))
         pressure = params.get('pressure', scalar(1., unit='atm'))
         radius = params.get('radius', sqrt(dot(spacing, spacing)) / 2)
-        elements = params.get('elements', 100)
+        elements = params.get('elements', 10)
         map(lambda x: __is_type__(*x), ((pressure, Variable, 'pressure'),
                                         (radius, Variable, 'radius'), (elements, int, 'elements')))
         # pack the tube parameters
@@ -58,6 +90,10 @@ class Triplet:
         # tube order: (-spacing, 0, +spacing); each tube from p-l/2 to p+l/2
         tubes = [He3Tube(position - l + m * s, position + l + m * s, *pack) for m in (-1, 0, 1)]
         return Triplet(tuple(tubes))
+
+    def triangulate(self, unit=None):
+        vts = [tube.triangulate(unit=unit) for tube in self.tubes]
+        return combine_triangulations(vts)
 
 
 @dataclass
@@ -73,7 +109,7 @@ class Analyzer:
         from math import pi
         from scipp import sqrt, dot, acos, sin, atan2
         from .rowland import rowland_blades
-        map(lambda x: __is__scipp_vector__(*x), ((position, 'position'), (focus, 'focus')))
+        map(lambda x: is_scipp_vector(*x), ((position, 'position'), (focus, 'focus')))
         count = params.get('count', 9)  # most analyzers have 9 blades
         width = params.get('width', scalar(10., unit='mm'))
         length = params.get('length', scalar(200., unit='mm'))
@@ -104,6 +140,9 @@ class Analyzer:
         blades = [Crystal(p, t, shape) for p, t in zip(positions, taus)]
         return Analyzer(tuple(blades))
 
+    def triangulate(self, unit=None):
+        vts = [blade.triangulate(unit=unit) for blade in self.blades]
+        return combine_triangulations(vts)
 
 @dataclass
 class Channel:
@@ -174,7 +213,7 @@ class Channel:
         rotations = rotations_from_rotvecs(rotation_vectors=two_thetas * vector([0, 1, 0], unit='1'))
         detector_vectors = rotations * (vector([1, 0, 0], unit='1') * dists_ad)
 
-        relative_rotation = rotations_from_rotvecs(rotation_vectors=relative_angle * vector([0, 1, 0], unit='1'))
+        relative_rotation = rotations_from_rotvecs(rotation_vectors=relative_angle * vector([0, 0, 1], unit='1'))
 
         analyzer_positions = sample + relative_rotation * analyzer_vectors
         detector_positions = sample + relative_rotation * (analyzer_vectors + detector_vectors)
@@ -190,6 +229,17 @@ class Channel:
             detectors.append(Triplet.from_calibration(dp, dl, ds))
 
         return Channel(tuple(analyzers), tuple(detectors))
+
+    def triangulate_detectors(self, unit=None):
+        vts = [detector.triangulate(unit=unit) for detector in self.detectors]
+        return combine_triangulations(vts)
+        
+    def triangulate_analyzers(self, unit=None):
+        vts = [analyzer.triangulate(unit=unit) for analyzer in self.analyzers]
+        return combine_triangulations(vts)
+
+    def triangulate(self, unit=None):
+        return combine_triangulations([self.triangulate_analyzers(unit=unit), self.triangulate_detectors(unit=unit)])
 
 
 @dataclass
@@ -223,4 +273,17 @@ class Tank:
                 a_per_d.extend([len(analyzers)-1 for _ in triplet.tubes])
 
         return IndirectSecondary(detectors, analyzers, a_per_d, sample_at)
+
+    def triangulate_detectors(self, unit=None):
+        vts = [channel.triangulate_detectors(unit=unit) for channel in self.channels]
+        return combine_triangulations(vts)
+        
+    def triangulate_analyzers(self, unit=None):
+        vts = [channel.triangulate_analyzers(unit=unit) for channel in self.channels]
+        return combine_triangulations(vts)
+
+    def triangulate(self, unit=None):
+        vts = [channel.triangulate(unit=unit) for channel in self.channels]
+        return combine_triangulations(vts)
+
 
