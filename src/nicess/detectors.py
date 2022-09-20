@@ -9,6 +9,11 @@ class Wire:
     at: Variable
     to: Variable
 
+    def extreme_path_corners(self, horizontal: Variable, vertical: Variable, unit=None):
+        from .spatial import combine_extremes
+        from scipp import concat
+        return combine_extremes([concat([self.at, self.to], 'vertices')], horizontal, vertical)
+
     def __eq__(self, other):
         if not isinstance(other, Wire):
             return False
@@ -170,6 +175,11 @@ class DiscreteTube(DiscreteWire):
         top = [[last, last - i - 1, last - (i + 1) % nvr -1] for i in range(nvr)]
         faces.extend(top)
         return vertices, faces
+
+    def extreme_path_corners(self, horizontal: Variable, vertical: Variable, unit=None):
+        from .spatial import combine_extremes
+        v, _ = self.triangulate(unit=unit)
+        return combine_extremes([v], horizontal, vertical)
 
     def __eq__(self, other):
         if not isinstance(other, DiscreteTube):

@@ -9,34 +9,33 @@ class IdealCrystal:
     position: Variable
     tau: Variable
 
-    def threejs_children(self, material=None, unit=None):
-        from scipp import sqrt, dot, vector
-        from .spatial import pythreejs_vector_to_vector_quaternion
-        from pythreejs import Mesh, SphereGeometry, ConeGeometry, CylinderGeometry
-        if material is None:
-            from pythreejs import MeshLambertMaterial
-            material = MeshLambertMaterial(color='red')
-        if unit is None:
-            unit = 'm'
-        com = Mesh(geometry=SphereGeometry(radius=2, widthSegments=32, heightSegments=32),
-                   material=material, position=self.position.to(unit=unit).value)
-
-        length = sqrt(dot(self.tau, self.tau))
-        Q = pythreejs_vector_to_vector_quaternion(vector([0, 0, 1.]), self.tau)
-
-        shaft_geom = CylinderGeometry(radiusTop=1, radiusBottom=1, height=length.value,
-                                 radialSegments=32, heightSegments=1, openEnded=True)
-        head_geom = ConeGeometry(radialSegments=32, radius=2, height=0.1*length.value)
-
+    # def threejs_children(self, material=None, unit=None):
+    #     from scipp import sqrt, dot, vector
+    #     from .spatial import pythreejs_vector_to_vector_quaternion
+    #     from pythreejs import Mesh, SphereGeometry, ConeGeometry, CylinderGeometry
+    #     if material is None:
+    #         from pythreejs import MeshLambertMaterial
+    #         material = MeshLambertMaterial(color='red')
+    #     if unit is None:
+    #         unit = 'm'
+    #     com = Mesh(geometry=SphereGeometry(radius=2, widthSegments=32, heightSegments=32),
+    #                material=material, position=self.position.to(unit=unit).value)
+    #
+    #     length = sqrt(dot(self.tau, self.tau))
+    #     Q = pythreejs_vector_to_vector_quaternion(vector([0, 0, 1.]), self.tau)
+    #
+    #     shaft_geom = CylinderGeometry(radiusTop=1, radiusBottom=1, height=length.value,
+    #                              radialSegments=32, heightSegments=1, openEnded=True)
+    #     head_geom = ConeGeometry(radialSegments=32, radius=2, height=0.1*length.value)
 
     def triangulate(self, unit=None):
-        from scipp import sqrt, dot, vector, arange, concat
+        from scipp import sqrt, dot, vector, arange, concat, cross, isclose
         from scipp.spatial import rotations_from_rotvecs
         if unit is None:
             unit = self.position.unit
         lt = sqrt(dot(self.tau, self.tau))
         # *a* vector perpendicular to tau
-        p = cross(self.tau, vector([1., 0, 0]) if isclose(self.tau.fields.z, ll) else vector([0, 0, 1.]))
+        p = cross(self.tau, vector([1., 0, 0]) if isclose(self.tau.fields.z, lt) else vector([0, 0, 1.]))
         p = (p/sqrt(dot(p, p)) / lt).to(unit=unit)
         a = arange(start=0, stop=360, step=10, dim='vertices', unit='degree')
         r = rotations_from_rotvecs(a*self.tau/lt)
@@ -46,6 +45,10 @@ class IdealCrystal:
 
         return vertices, triangles
 
+    def extreme_path_corners(self, horizontal: Variable, vertical: Variable, unit=None):
+        if unit is None:
+            unit = self.position.unit
+        return self.position.to(unit=unit)
 
     def __eq__(self, other):
         if not isinstance(other, IdealCrystal):
@@ -131,6 +134,7 @@ class IdealCrystal:
 @dataclass
 class Crystal(IdealCrystal):
     shape: Variable  # lengths: (in-scattering-plane perpendicular to Q, perpendicular to plane, along Q)
+    orientation: Variable
 
     def triangulate(self, unit=None):
         from .spatial import vector_to_vector_quaternion
@@ -138,14 +142,19 @@ class Crystal(IdealCrystal):
         if unit is None:
             unit = self.position.unit
         r = vector_to_vector_quaternion(vector([0,0,1.]), self.tau)
-        x, y, z = self.shape.value/2
+        x, y, z = 0.5 * self.shape.value
         vertices = vectors(unit=self.shape.unit, dims=['vertices'],
                           values=[[-x, -y, -z], [+x, -y, -z], [+x, +y, -z], [-x, +y, -z],
                                   [-x, -y, +z], [+x, -y, +z], [+x, +y, +z], [-x, +y, +z]])
-        vertices = r * vertices
+        vertices = r * self.orientation * vertices
         faces = [[0, 2, 1], [2, 0, 3], [1, 2, 6], [1, 6, 5], [0, 1, 5], [0, 5, 4],
                  [3, 0, 4], [3, 4, 7], [2, 3, 7], [2, 7, 6], [4, 5, 6], [4, 6, 7]]
         return vertices.to(unit=unit) + self.position.to(unit=unit), faces
+
+    def extreme_path_corners(self, horizontal: Variable, vertical: Variable, unit=None):
+        from .spatial import combine_extremes
+        v, _ = self.triangulate(unit=unit)
+        return combine_extremes([v], horizontal, vertical)
 
 
     def __eq__(self, other):
@@ -164,6 +173,8 @@ class Crystal(IdealCrystal):
         super().__post_init__()
         if self.shape.dtype != DType.vector3:
             raise RuntimeError("shape must be of type scipp.DType('vector3')")
+        if self.orientation.dtype != DType.rotation3:
+            raise RuntimeError("orientation must be of type scipp.DType('rotation3')")
 
     def _serialize_types(self):
         types = super()._serialize_types
