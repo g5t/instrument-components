@@ -33,24 +33,32 @@ class Triplet:
     tubes: tuple[He3Tube, He3Tube, He3Tube]
 
     @staticmethod
-    def from_calibration(position: Variable, length: Variable, spacing: Variable, **params):
+    def from_calibration(position: Variable, length: Variable, **params):
         """Take (fitting) calibration data and construct the object used to convert events to (Q,E)"""
         # The current crop of inputs is not sufficient to capture all degrees of freedom, but is a start.
-        from scipp import sqrt, dot
+        from scipp import sqrt, dot, vector
+        from scipp.spatial import rotations
         from .spatial import is_scipp_vector
-        map(lambda x: is_scipp_vector(*x), ((position, 'position'), (length, 'length'), (spacing, 'spacing')))
+        map(lambda x: is_scipp_vector(*x), ((position, 'position'),))
+        if position.ndim != 1 or 'tube' not in position.dims or position.sizes['tube'] != 3:
+            raise RuntimeError("Expected positions for 3 'tube'")
+
+        ori = params.get('orient', None)
+        ori = rotations(values=[[0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 1]], dims=['tube']) if ori is None else ori
+
         pressure = params.get('pressure', scalar(1., unit='atm'))
-        radius = params.get('radius', sqrt(dot(spacing, spacing)) / 2)
+        radius = params.get('radius', scalar(10., unit='mm'))
         elements = params.get('elements', 10)
-        map(lambda x: __is_type__(*x), ((pressure, Variable, 'pressure'),
+        map(lambda x: __is_type__(*x), ((pressure, Variable, 'pressure'), (length, Variable, 'length'),
                                         (radius, Variable, 'radius'), (elements, int, 'elements')))
         # pack the tube parameters
         pack = elements, radius.value, pressure.value
-        # make sure all vectors are in the same length unit:
-        l = 0.5 * length.to(unit=position.unit)
-        s = spacing.to(unit=position.unit)
-        # tube order: (-spacing, 0, +spacing); each tube from p-l/2 to p+l/2
-        tubes = [He3Tube(position - l + m * s, position + l + m * s, *pack) for m in (-1, 0, 1)]
+
+        # Make the oriented tube-axis vector(s)
+        axis = ori * (length.to(unit=position.unit) * vector([0, 1., 0]))  # may be a 0-D or 1-D (tube) vector array
+        tube_at = position - 0.5 * axis  # should now be a 1-D (tube) vector array
+        tube_to = position + 0.5 * axis  # *ditto*
+        tubes = (He3Tube(at, to, *pack) for at, to in zip(tube_at, tube_to))
         return Triplet(tuple(tubes))
 
     def triangulate(self, unit=None):
@@ -81,7 +89,8 @@ class Analyzer:
         map(lambda x: is_scipp_vector(*x), ((position, 'position'), (focus, 'focus')))
         count = params.get('count', 9)  # most analyzers have 9 blades
         shape = params.get('shape', vector([10., 200., 2.], unit='mm'))
-        orientation = params.get('orientation', rotation(value=[0, 0, 0, 1.]))
+        orient = params.get('orient', None)
+        orient = rotation(value=[0, 0, 0, 1.]) if orient is None else orient
         tau = params.get('tau', 2 * pi / params.get('dspacing', scalar(3.355, unit='angstrom')))  # PG(002)
         # qin_coverage = params.get('qin_coverage', params.get('coverage', scalar(0.1, unit='1/angstrom')))
         coverage = params.get('coverage', scalar(2, unit='degree'))
@@ -103,7 +112,7 @@ class Analyzer:
         positions, taus = rowland_blades(source, position, focus, alpha, shape.fields.x, count)
         taus *= tau  # convert from directions to full tau vectors
 
-        blades = [Crystal(p, t, shape, orientation) for p, t in zip(positions, taus)]
+        blades = [Crystal(p, t, shape, orient) for p, t in zip(positions, taus)]
         return Analyzer(tuple(blades))
 
     def triangulate(self, unit=None):
@@ -123,9 +132,11 @@ class Arm:
     detector: Triplet
 
     @staticmethod
-    def from_calibration(a_position, d_position, d_length, d_spacing, **params):
-        analyzer = Analyzer.from_calibration(a_position, d_position, **params)
-        detector = Triplet.from_calibration(d_position, d_length, d_spacing)
+    def from_calibration(a_position, d_position, d_length, **params):
+        analyzer_orient = params.get('analyzer_orient', None)
+        detector_orient = params.get('detector_orient', None)
+        analyzer = Analyzer.from_calibration(a_position, d_position, **params, orient=analyzer_orient)
+        detector = Triplet.from_calibration(d_position, d_length, orient=detector_orient)
         return Arm(analyzer, detector)
 
     def triangulate_detector(self, unit=None):
@@ -160,6 +171,7 @@ class Arm:
         vertices = concat((sample, at_analyzer, at_detector), 'vertices')
         return vertices, numpy_array(edges, dtype=numpy_int)
 
+
 @dataclass
 class Channel:
     pairs: tuple[Arm, Arm, Arm, Arm, Arm]
@@ -169,72 +181,75 @@ class Channel:
         from math import pi
         from scipp import sqrt, dot, acos, sin, tan, atan, atan2, asin, min, max
         from scipp.constants import hbar, neutron_mass
-        from scipp.spatial import rotations_from_rotvecs
+        from scipp.spatial import rotation, rotations_from_rotvecs
         known = dict()
-        known_dists_sa = {
-            's': array(values=[1.100, 1.238, 1.342, 1.433, 1.544], unit='m', dims=['analyzer']),
-            'm': array(values=[1.189, 1.316, 1.420, 1.521, 1.623], unit='m', dims=['analyzer']),
-            'l': array(values=[1.276, 1.388, 1.493, 1.595, 1.697], unit='m', dims=['analyzer']),
+        dist_sa = {
+            's': [1.100, 1.238, 1.342, 1.433, 1.544],
+            'm': [1.189, 1.316, 1.420, 1.521, 1.623],
+            'l': [1.276, 1.388, 1.493, 1.595, 1.697],
         }
+        known['dist_sa'] = {k: array(values=v, unit='m', dims=['analyzer']) for k, v in dist_sa.items()}
         d_length_mm = {
-            's': [[0, 217.9, 0], [0, 242.0, 0], [0, 260.8, 0], [0, 279.2, 0], [0, 298.8, 0]],
-            'm': [[0, 226.0, 0], [0, 249.0, 0], [0, 267.9, 0], [0, 286.3, 0], [0, 304.8, 0]],
-            'l': [[0, 233.9, 0], [0, 255.9, 0], [0, 274.9, 0], [0, 293.4, 0], [0, 311.9, 0]],
+            's': [217.9, 242.0, 260.8, 279.2, 298.8],
+            'm': [226.0, 249.0, 267.9, 286.3, 304.8],
+            'l': [233.9, 255.9, 274.9, 293.4, 311.9],
         }
-        known['d_length'] = {k: vectors(values=v, unit='mm', dims=['analyzer']) for k, v in d_length_mm.items()}
-        d_spacing_mm = {
-            's': [[20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0]],
-            'm': [[20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0]],
-            'l': [[20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0], [20., 0, 0]],
-        }
-        known['d_spacing'] = {k: vectors(values=v, unit='mm', dims=['analyzer']) for k, v in d_spacing_mm.items()}
+        known['d_length'] = {k: array(values=v, unit='mm', dims=['analyzer']) for k, v in d_length_mm.items()}
+        known['d_offset'] = vectors(values=[[0, 0, -20.], [0, 0, 0], [0, 0, 20]], unit='mm', dims=['tube'])
+        known['d_orient'] = rotation(value=[0, 0, 0, 1])
         a_shape_mm = {
             's': [[12.0, 134.0, 2], [14.0, 147.1, 2], [11.5, 156.2, 2], [12.0, 165.2, 2], [13.5, 175.6, 2]],
             'm': [[12.5, 142.0, 2], [14.5, 154.1, 2], [11.5, 163.2, 2], [12.5, 172.3, 2], [13.5, 181.6, 2]],
             'l': [[13.5, 149.9, 2], [15.0, 161.0, 2], [12.0, 170.2, 2], [13.0, 179.3, 2], [14.0, 188.6, 2]],
         }
         known['a_shape'] = {k: vectors(values=v, unit='mm', dims=['analyzer']) for k, v in a_shape_mm.items()}
+        known['blade_count'] = array(values=[9, 9, 9, 7, 7], dims=['analyzer'])
+        known['d_spacing'] = scalar(3.355, unit='angstrom')  # PG(002)
+        known['coverage'] = scalar(2., unit='degree')
+        known['energy'] = array(values=[2.7, 3.2, 3.7, 4.4, 5.], unit='meV', dims=['analyzer'])
 
-        counts = params.get('counts', [9, 9, 9, 7, 7])
         variant = params.get('variant', 'm')
-        tau = params.get('tau', 2 * pi / params.get('dspacing', scalar(3.355, unit='angstrom')))  # PG(002)
-        crystal_shapes = params.get('crystal_shapes', known['a_shape'][variant])
-        detector_lengths = params.get('detector_lengths', known['d_length'][variant])
-        detector_spacings = params.get('detector_spacings', known['d_spacing'][variant])
-        coverage = params.get('coverage', scalar(2., unit='degree'))
-        energies = params.get('energies', array(values=[2.7, 3.2, 3.7, 4.4, 5.], unit='meV', dims=['analyzer']))
-        dists_sa = params.get('sample_analyzer_distances', known_dists_sa[params.get('variant', 'm')])
-        dists_ad = params.get('analyzer_detector_distances', known_dists_sa['m'])
+        blade_count = params.get('blade_count', known['blade_count'])
+        tau = params.get('tau', 2 * pi / params.get('d_spacing', known['d_spacing']))
+        crystal_shape = params.get('crystal_shape', known['a_shape'][variant])
+        detector_length = params.get('detector_length', known['d_length'][variant])
+        detector_orient = params.get('detector_orient', known['d_orient'])
+        detector_offset = params.get('detector_offset', known['d_offset'])
+        coverage = params.get('coverage', known['coverage'])
+        energy = params.get('energy', known['energy'])
+        dist_sa = params.get('sample_analyzer_distance', known['dist_sa'][variant])
+        dist_ad = params.get('analyzer_detector_distance', known['dist_sa']['m'])
         sample = params.get('sample', vector([0, 0, 0], unit='m'))
 
-        analyzer_vectors = vector([1, 0, 0], unit='1') * dists_sa
+        analyzer_vector = vector([1, 0, 0], unit='1') * dist_sa
 
-        ks = (sqrt(energies * 2 * neutron_mass) / hbar).to(unit='1/angstrom')
+        ks = (sqrt(energy * 2 * neutron_mass) / hbar).to(unit='1/angstrom')
         two_thetas = -2 * asin(0.5 * tau / ks)
         two_theta_vectors = two_thetas * vector([0, -1, 0])
-        rotations = rotations_from_rotvecs(two_theta_vectors)
-        detector_vectors = rotations * (vector([1, 0, 0], unit='1') * dists_ad)
-        # detector spacing vectors are rotated by 2theta-pi/2 around y
-        half_pi_vector = vector([0, 90, 0], unit='degree').to(unit=two_theta_vectors.unit)
-        detector_rotations = rotations_from_rotvecs(two_theta_vectors - half_pi_vector)
-        detector_spacings = detector_rotations * detector_spacings
+        two_theta_rotation = rotations_from_rotvecs(two_theta_vectors)
+        # Detector offsets are specified in a frame with x along the scattered beam, y in the plane of the analyzer
+        detector_vector = two_theta_rotation * (vector([1, 0, 0], unit='1') * dist_ad + detector_offset)
 
+        # Rotation of the whole analyzer channel around the vertical sample-table axis
         relative_rotation = rotations_from_rotvecs(relative_angle * vector([0, 0, 1], unit='1'))
 
-        analyzer_positions = sample + relative_rotation * analyzer_vectors
-        detector_positions = sample + relative_rotation * (analyzer_vectors + detector_vectors)
+        analyzer_position = sample + relative_rotation * analyzer_vector
+        detector_position = sample + relative_rotation * (analyzer_vector + detector_vector)
 
-        detector_lengths = relative_rotation * detector_lengths
-        detector_spacings = relative_rotation * detector_spacings
+        # The detector tube orientation rotation(s) must be modified by the channel rotation:
+        detector_orient = relative_rotation * detector_orient
 
         # coverages = tan(min(ks) * atan(1.0*coverage) / ks)
         coverages = atan(min(ks) * tan(1.0 * coverage) / ks)
 
+        per_det = 'analyzer' in detector_orient.dims
         pairs = []
-        for ap, dp, dl, ds, ct, cs, cc in zip(analyzer_positions, detector_positions, detector_lengths,
-                                                      detector_spacings, counts, crystal_shapes, coverages):
-            params = dict(sample=sample, count=ct, shape=cs, orientation=relative_rotation, tau=tau, coverage=cc)
-            pairs.append(Arm.from_calibration(ap, dp, dl, ds, **params))
+        for idx, ap, dl, ct, cs, cc in enumerate(zip(
+                analyzer_position, detector_length, blade_count, crystal_shape, coverages
+        )):
+            params = dict(sample=sample, blade_count=ct, shape=cs, analyzer_orient=relative_rotation, tau=tau,
+                          coverage=cc, detector_orient=detector_orient['analyzer', idx] if per_det else detector_orient)
+            pairs.append(Arm.from_calibration(ap, detector_position['analyzer', idx], dl, **params))
 
         return Channel(tuple(pairs))
 
