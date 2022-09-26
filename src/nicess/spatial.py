@@ -20,15 +20,21 @@ def __is_quaternion__(x: Variable):
 def vector_to_vector_quaternion(fr: Variable, to: Variable):
     if not __is_vector__(fr) or not __is_vector__(to):
         raise RuntimeError("Two vectors required!")
-    from scipp import sqrt, dot, cross, scalar
-    from scipp.spatial import rotation
+    from scipp import sqrt, dot, cross
+    from numpy import concatenate, expand_dims
     # following http://lolengine.net/blog/2013/09/18/beautiful-maths-quaternion-from-vectors
     u = fr / sqrt(dot(fr, fr))
     v = to / sqrt(dot(to, to))
-    m = sqrt(scalar(2) + 2 * dot(u, v))
-    w = (1 / m) * cross(u, v)
-    # rotation value [x, y, z, w] -> w + x*i + y*j + z*k
-    return rotation(value=[*w.value, m.value / 2])
+    scalar_part = 0.5 * sqrt(2 + 2 * dot(u, v))
+    vector_part = 0.5 * cross(u, v) / scalar_part
+    values = concatenate((vector_part.values, expand_dims(scalar_part.values, axis=-1)), axis=-1)
+    dims = vector_part.dims
+
+    # we need to bypass the standard error checking in the scipp python module due to a bug:
+    # from scipp.spatial import rotations
+    from scipp._scipp import core as scipp_core
+    q = scipp_core.rotations(values=values, dims=dims)
+    return q
 
 
 def combine_triangulations(vts: list[tuple[Variable, list[list[int]]]]):

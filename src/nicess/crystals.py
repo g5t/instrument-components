@@ -141,7 +141,7 @@ class Crystal(IdealCrystal):
         from scipp import vectors, vector
         if unit is None:
             unit = self.position.unit
-        r = vector_to_vector_quaternion(vector([0,0,1.]), self.tau)
+        r = vector_to_vector_quaternion(vector([0, 0, 1.]), self.tau)
         x, y, z = 0.5 * self.shape.value
         vertices = vectors(unit=self.shape.unit, dims=['vertices'],
                           values=[[-x, -y, -z], [+x, -y, -z], [+x, +y, -z], [-x, +y, -z],
@@ -195,5 +195,6 @@ class Crystal(IdealCrystal):
         out = [Crystal(*pack) for pack in zip(pos, tau, shape)]
         return out[0] if len(out) == 1 else out
 
-
-
+    def mcstas_parameters(self):
+        from numpy import hstack
+        return hstack(self.position.value, self.shape.value)

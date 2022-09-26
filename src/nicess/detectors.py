@@ -25,7 +25,6 @@ class Wire:
             return False
         return allclose(self.at, other.at) and allclose(self.to, other.to)
 
-
     def __post_init__(self):
         from scipp import DType
         if self.at.dtype != DType.vector3:
@@ -78,6 +77,12 @@ class Wire:
         extras = scalar_deserialize(structured, cls.scalar_deserialization_targets())
         out = [cls(*pack) for pack in zip(at, to, *extras)]
         return out[0] if len(out) == 1 else out
+
+    def mcstas_parameters(self):
+        from numpy import hstack
+        center = (self.at + self.to)/2
+        axis = (self.to - self.at)/2
+        return hstack((center.value, axis.value))
 
 
 @dataclass
