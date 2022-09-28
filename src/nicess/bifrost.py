@@ -204,7 +204,7 @@ class Arm:
         return vertices, numpy_array(edges, dtype=numpy_int)
 
     def mcstas_parameters(self, sample: Variable):
-        from numpy import stack
+        from numpy import stack, hstack
         from scipp import sqrt, dot, cross
         from .spatial import is_scipp_vector, perpendicular_directions
         is_scipp_vector(sample, 'sample')
@@ -232,14 +232,16 @@ class Arm:
         tube_end = self.detector.tube_end()
 
         # this could be simplified if we built the column matrix (xd, yd, zd)
-        tube_com_d = sum([dot(tube_com, x) * x for x in (xd, yd, zd)])
-        tube_end_d = sum([dot(tube_end, x) * x for x in (xd, yd, zd)])
+        tube_com_x, tube_com_y, tube_com_z = [dot(tube_com, x) * x for x in (xd, yd, zd)]
+        tube_com_d = tube_com_x + tube_com_y + tube_com_z
+        tube_end_x, tube_end_y, tube_end_z =[dot(tube_end, x) * x for x in (xd, yd, zd)]
+        tube_end_d = tube_end_x + tube_end_y + tube_end_z
         # shift the COM relative to the expected detector position
         tube_com_d.fields.z -= sqrt(dot(ad, ad))
 
         # this is not good. Can we verify which axis is the coordinate axis and which is the tube axis?
         d = stack((tube_com_d.to(unit='m').values, tube_end_d.to(unit='m').values), axis=1)
-        a = stack((len(self.analyzer.blades), self.analyzer.central_blade.shape.to(unit='m').value), axis=0)
+        a = hstack((len(self.analyzer.blades), self.analyzer.central_blade.shape.to(unit='m').value))
 
         return {'distances': distances, 'analyzer': a, 'detector': d}
 
