@@ -114,3 +114,12 @@ def perpendicular_directions(direction: Variable):
     vertical = cross(horizontal, direction)
 
     return horizontal, vertical
+
+
+def combine_assembly(ws: list):
+    from cadquery import Assembly
+    a = Assembly()
+    for w in ws:
+        a = a.add(w)
+    #a.solve()
+    return a.toCompound()

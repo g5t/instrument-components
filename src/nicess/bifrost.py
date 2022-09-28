@@ -13,6 +13,12 @@ def __is_type__(x, t, name):
         raise RuntimeError(f"{name} must be a {t}")
 
 
+def variant_parameters(params: dict, default: dict):
+    variant = params.get('variant', default['variant'])
+    complete = {k: params.get(k, v[variant] if isinstance(v, dict) else v) for k, v in default.items()}
+    return complete
+
+
 @dataclass
 class BIFROST:
     # primary: BandwidthPrimary   # A minimal form of the primary spectrometer necessary to transform events
@@ -52,7 +58,7 @@ class Triplet:
         map(lambda x: __is_type__(*x), ((pressure, Variable, 'pressure'), (length, Variable, 'length'),
                                         (radius, Variable, 'radius'), (elements, int, 'elements')))
         # pack the tube parameters
-        pack = elements, radius.value, pressure.value
+        pack = elements, radius, pressure
 
         # Make the oriented tube-axis vector(s)
         axis = ori * (length.to(unit=position.unit) * vector([0, 1., 0]))  # may be a 0-D or 1-D (tube) vector array
@@ -70,6 +76,23 @@ class Triplet:
         from .spatial import combine_extremes
         vs = [tube.extreme_path_corners(horizontal, vertical, unit=unit) for tube in self.tubes]
         return combine_extremes(vs, horizontal, vertical)
+
+    def mcstas_parameters(self):
+        from numpy import vstack
+        return vstack([tube.mcstas_parameters for tube in self.tubes])
+
+    def tube_com(self):
+        from scipp import concat
+        return concat([(t.at + t.to)/2 for t in self.tubes], 'tube')
+
+    def tube_end(self):
+        from scipp import concat
+        return concat([(t.to - t.at)/2 for t in self.tubes], 'tube')
+
+    def to_cadquery(self, unit=None):
+        from .spatial import combine_assembly
+        return combine_assembly([tube.to_cadquery(unit=unit) for tube in self.tubes])
+
 
 
 @dataclass
@@ -91,7 +114,7 @@ class Analyzer:
         shape = params.get('shape', vector([10., 200., 2.], unit='mm'))
         orient = params.get('orient', None)
         orient = rotation(value=[0, 0, 0, 1.]) if orient is None else orient
-        tau = params.get('tau', 2 * pi / params.get('dspacing', scalar(3.355, unit='angstrom')))  # PG(002)
+        tau = params.get('tau', 2 * pi / params.get('d_spacing', scalar(3.355, unit='angstrom')))  # PG(002)
         # qin_coverage = params.get('qin_coverage', params.get('coverage', scalar(0.1, unit='1/angstrom')))
         coverage = params.get('coverage', scalar(2, unit='degree'))
         source = params.get('source', params.get('sample_position', vector([0, 0, 0], unit='m')))
@@ -106,8 +129,7 @@ class Analyzer:
         # # the angular coverage is given by the triangle with base |k_i| and height |Q_in_plane|/2
         # alpha = atan2(0.5 * qin_coverage, k)  # the angular positions around the Rowland circle are not +/- alpha
         #
-        alpha = 0.5 * coverage
-
+        alpha = coverage # 0.5 * coverage
         # Use the Rowland geometry to define each blade position & normal direction
         positions, taus = rowland_blades(source, position, focus, alpha, shape.fields.x, count)
         taus *= tau  # convert from directions to full tau vectors
@@ -125,6 +147,14 @@ class Analyzer:
         vs = [blade.extreme_path_corners(horizontal, vertical, unit=unit) for blade in self.blades]
         return combine_extremes(vs, horizontal, vertical)
 
+    def mcstas_parameters(self):
+        from numpy import hstack
+        return hstack((len(self.blades), self.central_blade.mcstas_parameters))
+
+    def to_cadquery(self, unit=None):
+        from .spatial import combine_assembly
+        return combine_assembly([blade.to_cadquery(unit=unit) for blade in self.blades])
+
 
 @dataclass
 class Arm:
@@ -135,7 +165,9 @@ class Arm:
     def from_calibration(a_position, d_position, d_length, **params):
         analyzer_orient = params.get('analyzer_orient', None)
         detector_orient = params.get('detector_orient', None)
-        analyzer = Analyzer.from_calibration(a_position, d_position, **params, orient=analyzer_orient)
+        # the analyzer focuses on the center tube of the triplet
+        a_focus = d_position['tube', 1] if 'tube' in d_position.dims else d_position
+        analyzer = Analyzer.from_calibration(a_position, a_focus, **params, orient=analyzer_orient)
         detector = Triplet.from_calibration(d_position, d_length, orient=detector_orient)
         return Arm(analyzer, detector)
 
@@ -171,6 +203,106 @@ class Arm:
         vertices = concat((sample, at_analyzer, at_detector), 'vertices')
         return vertices, numpy_array(edges, dtype=numpy_int)
 
+    def mcstas_parameters(self, sample: Variable):
+        from numpy import stack
+        from scipp import sqrt, dot, cross
+        from .spatial import is_scipp_vector, perpendicular_directions
+        is_scipp_vector(sample, 'sample')
+
+        # TODO find sample-analyzer and analyzer-detector distances, move positions into appropriate frames
+        # analyzer_position -> [0, 0, sample-analyzer-distance]
+        # detector_position -> [[dx0, dy0, dz0], [dx1, dy1, analyzer-detector-distance], [dx2, dy2, dz2]]
+        # end_position -> z along analyzer-detector vector 'Arm' (in McStas local coordinate frame)
+
+        sa = self.analyzer.central_blade.position - sample
+        ad = (self.detector.tubes[1].at + self.detector.tubes[1].to)/2 - self.analyzer.central_blade.position
+
+        distances = [sqrt(dot(x, x)).to(unit='m').value for x in (sa, ad)]
+        # the coordinate system here has 'local' x along the beam, and z vertical
+        # the McStas local cooridnate system always has z along the beam and y defines the local scattering plane normal
+        # for BIFROST's analyzers, the two coordinate systems have parallel (or maybe antiparallel) y directions
+
+        za = sa / sqrt(dot(sa, sa))
+        zd = ad / sqrt(dot(ad, ad))
+        yd = cross(za, zd)
+        yd /= sqrt(dot(yd, yd))
+        xd = cross(yd, zd)
+
+        tube_com = self.detector.tube_com() - self.analyzer.central_blade.position
+        tube_end = self.detector.tube_end()
+
+        # this could be simplified if we built the column matrix (xd, yd, zd)
+        tube_com_d = sum([dot(tube_com, x) * x for x in (xd, yd, zd)])
+        tube_end_d = sum([dot(tube_end, x) * x for x in (xd, yd, zd)])
+        # shift the COM relative to the expected detector position
+        tube_com_d.fields.z -= sqrt(dot(ad, ad))
+
+        # this is not good. Can we verify which axis is the coordinate axis and which is the tube axis?
+        d = stack((tube_com_d.to(unit='m').values, tube_end_d.to(unit='m').values), axis=1)
+        a = stack((len(self.analyzer.blades), self.analyzer.central_blade.shape.to(unit='m').value), axis=0)
+
+        return {'distances': distances, 'analyzer': a, 'detector': d}
+
+    def to_cadquery(self, unit=None):
+        from .spatial import combine_assembly
+        a = self.analyzer.to_cadquery(unit=unit)
+        d = self.detector.to_cadquery(unit=unit)
+        # combine a and d into an Assembly?
+        return combine_assembly([a, d])
+
+
+def known_channel_params():
+    known = dict()
+    dist_sa = {
+        's': [1.100, 1.238, 1.342, 1.433, 1.544],
+        'm': [1.189, 1.316, 1.420, 1.521, 1.623],
+        'l': [1.276, 1.388, 1.493, 1.595, 1.697],
+    }
+    known['sample_analyzer_distance'] = {k: array(values=v, unit='m', dims=['analyzer']) for k, v in dist_sa.items()}
+    known['analyzer_detector_distance'] = known['sample_analyzer_distance']['m']
+    d_length_mm = {
+        's': [217.9, 242.0, 260.8, 279.2, 298.8],
+        'm': [226.0, 249.0, 267.9, 286.3, 304.8],
+        'l': [233.9, 255.9, 274.9, 293.4, 311.9],
+    }
+    known['detector_length'] = {k: array(values=v, unit='mm', dims=['analyzer']) for k, v in d_length_mm.items()}
+    known['detector_offset'] = vectors(values=[[0, 0, -20.], [0, 0, 0], [0, 0, 20]], unit='mm', dims=['tube'])
+    known['detector_orient'] = vector([0, 0, 0], unit='mm')
+    a_shape_mm = {
+        's': [[12.0, 134.0, 2], [14.0, 147.1, 2], [11.5, 156.2, 2], [12.0, 165.2, 2], [13.5, 175.6, 2]],
+        'm': [[12.5, 142.0, 2], [14.5, 154.1, 2], [11.5, 163.2, 2], [12.5, 172.3, 2], [13.5, 181.6, 2]],
+        'l': [[13.5, 149.9, 2], [15.0, 161.0, 2], [12.0, 170.2, 2], [13.0, 179.3, 2], [14.0, 188.6, 2]],
+    }
+    known['crystal_shape'] = {k: vectors(values=v, unit='mm', dims=['analyzer']) for k, v in a_shape_mm.items()}
+    known['blade_count'] = array(values=[9, 9, 9, 7, 7], dims=['analyzer'])
+    known['d_spacing'] = scalar(3.355, unit='angstrom')  # PG(002)
+    known['coverage'] = scalar(2., unit='degree')
+    known['energy'] = array(values=[2.7, 3.2, 3.7, 4.4, 5.], unit='meV', dims=['analyzer'])
+    known['sample'] = vector([0, 0, 0.], unit='m')
+    known['variant'] = 'm'
+    return known
+
+
+def tube_xz_displacement_to_quaternion(length: Variable, displacement: Variable):
+    from scipp import vector, scalar, any, sqrt, allclose
+    from .spatial import vector_to_vector_quaternion
+    com_to_end = length * vector([0, 0.5, 0]) + displacement
+    l2 = length * length
+    x2 = displacement.fields.x * displacement.fields.x
+    z2 = displacement.fields.z * displacement.fields.z
+
+    com_to_end.fields.y = sqrt(0.25 * l2 - x2 - z2)
+
+    y2 = displacement.fields.y * displacement.fields.y
+    if any(y2 > scalar(0, unit=y2.unit)) and not allclose(com_to_end.fields.y, 0.5 * length - displacement.fields.y):
+        raise RuntimeError("Provided tube-end displacement vector(s) contain wrong y-component value(s)")
+
+    # The tube *should* point along y, but we were told it is displaced in x and z;
+    # return the orienting Quaternion that takes (010) to the actual orientation
+    quaternion = vector_to_vector_quaternion(vector([0, 1, 0]), com_to_end)
+    return quaternion
+
+
 
 @dataclass
 class Channel:
@@ -179,73 +311,45 @@ class Channel:
     @staticmethod
     def from_calibration(relative_angle: Variable, **params):
         from math import pi
-        from scipp import sqrt, dot, acos, sin, tan, atan, atan2, asin, min, max
+        from scipp import sqrt, tan, atan, asin, min
         from scipp.constants import hbar, neutron_mass
-        from scipp.spatial import rotation, rotations_from_rotvecs
-        known = dict()
-        dist_sa = {
-            's': [1.100, 1.238, 1.342, 1.433, 1.544],
-            'm': [1.189, 1.316, 1.420, 1.521, 1.623],
-            'l': [1.276, 1.388, 1.493, 1.595, 1.697],
-        }
-        known['dist_sa'] = {k: array(values=v, unit='m', dims=['analyzer']) for k, v in dist_sa.items()}
-        d_length_mm = {
-            's': [217.9, 242.0, 260.8, 279.2, 298.8],
-            'm': [226.0, 249.0, 267.9, 286.3, 304.8],
-            'l': [233.9, 255.9, 274.9, 293.4, 311.9],
-        }
-        known['d_length'] = {k: array(values=v, unit='mm', dims=['analyzer']) for k, v in d_length_mm.items()}
-        known['d_offset'] = vectors(values=[[0, 0, -20.], [0, 0, 0], [0, 0, 20]], unit='mm', dims=['tube'])
-        known['d_orient'] = rotation(value=[0, 0, 0, 1])
-        a_shape_mm = {
-            's': [[12.0, 134.0, 2], [14.0, 147.1, 2], [11.5, 156.2, 2], [12.0, 165.2, 2], [13.5, 175.6, 2]],
-            'm': [[12.5, 142.0, 2], [14.5, 154.1, 2], [11.5, 163.2, 2], [12.5, 172.3, 2], [13.5, 181.6, 2]],
-            'l': [[13.5, 149.9, 2], [15.0, 161.0, 2], [12.0, 170.2, 2], [13.0, 179.3, 2], [14.0, 188.6, 2]],
-        }
-        known['a_shape'] = {k: vectors(values=v, unit='mm', dims=['analyzer']) for k, v in a_shape_mm.items()}
-        known['blade_count'] = array(values=[9, 9, 9, 7, 7], dims=['analyzer'])
-        known['d_spacing'] = scalar(3.355, unit='angstrom')  # PG(002)
-        known['coverage'] = scalar(2., unit='degree')
-        known['energy'] = array(values=[2.7, 3.2, 3.7, 4.4, 5.], unit='meV', dims=['analyzer'])
+        from scipp.spatial import rotations_from_rotvecs
 
-        variant = params.get('variant', 'm')
-        blade_count = params.get('blade_count', known['blade_count'])
-        tau = params.get('tau', 2 * pi / params.get('d_spacing', known['d_spacing']))
-        crystal_shape = params.get('crystal_shape', known['a_shape'][variant])
-        detector_length = params.get('detector_length', known['d_length'][variant])
-        detector_orient = params.get('detector_orient', known['d_orient'])
-        detector_offset = params.get('detector_offset', known['d_offset'])
-        coverage = params.get('coverage', known['coverage'])
-        energy = params.get('energy', known['energy'])
-        dist_sa = params.get('sample_analyzer_distance', known['dist_sa'][variant])
-        dist_ad = params.get('analyzer_detector_distance', known['dist_sa']['m'])
-        sample = params.get('sample', vector([0, 0, 0], unit='m'))
+        vp = variant_parameters(params, known_channel_params())
 
-        analyzer_vector = vector([1, 0, 0], unit='1') * dist_sa
+        tau = params.get('tau', 2 * pi / vp['d_spacing'])
 
-        ks = (sqrt(energy * 2 * neutron_mass) / hbar).to(unit='1/angstrom')
+        sample = vp['sample']
+
+        analyzer_vector = vector([1, 0, 0]) * vp['sample_analyzer_distance']
+
+        ks = (sqrt(vp['energy'] * 2 * neutron_mass) / hbar).to(unit='1/angstrom')
         two_thetas = -2 * asin(0.5 * tau / ks)
         two_theta_vectors = two_thetas * vector([0, -1, 0])
         two_theta_rotation = rotations_from_rotvecs(two_theta_vectors)
         # Detector offsets are specified in a frame with x along the scattered beam, y in the plane of the analyzer
-        detector_vector = two_theta_rotation * (vector([1, 0, 0], unit='1') * dist_ad + detector_offset)
+        add = 'analyzer_detector_distance'
+        detector_vector = vector([1, 0, 0]) * vp[add] + vp['detector_offset'].to(unit=vp[add].unit)
 
         # Rotation of the whole analyzer channel around the vertical sample-table axis
-        relative_rotation = rotations_from_rotvecs(relative_angle * vector([0, 0, 1], unit='1'))
+        relative_rotation = rotations_from_rotvecs(relative_angle * vector([0, 0, 1]))
 
         analyzer_position = sample + relative_rotation * analyzer_vector
-        detector_position = sample + relative_rotation * (analyzer_vector + detector_vector)
+        detector_position = sample + relative_rotation * (analyzer_vector + two_theta_rotation * detector_vector)
+
+        # The detector orientation is given by a displacement vector of the tube-end, we want the associated quaternion
+        detector_orient = tube_xz_displacement_to_quaternion(vp['detector_length'], vp['detector_orient'])
 
         # The detector tube orientation rotation(s) must be modified by the channel rotation:
         detector_orient = relative_rotation * detector_orient
 
         # coverages = tan(min(ks) * atan(1.0*coverage) / ks)
-        coverages = atan(min(ks) * tan(1.0 * coverage) / ks)
+        coverages = atan(min(ks) * tan(1.0 * vp['coverage']) / ks)
 
         per_det = 'analyzer' in detector_orient.dims
         pairs = []
-        for idx, ap, dl, ct, cs, cc in enumerate(zip(
-                analyzer_position, detector_length, blade_count, crystal_shape, coverages
+        for idx, (ap, dl, ct, cs, cc) in enumerate(zip(
+                analyzer_position, vp['detector_length'], vp['blade_count'], vp['crystal_shape'], coverages
         )):
             params = dict(sample=sample, blade_count=ct, shape=cs, analyzer_orient=relative_rotation, tau=tau,
                           coverage=cc, detector_orient=detector_orient['analyzer', idx] if per_det else detector_orient)
@@ -276,6 +380,24 @@ class Channel:
         # concatenate the vertices
         vertices = concat([v for v, _ in ves], 'vertices')
         return vertices, edges
+
+    def mcstas_parameters(self, sample: Variable):
+        from numpy import stack
+        parameters = [arm.mcstas_parameters(sample) for arm in self.pairs]
+        channel_distances = stack([p['distances'] for p in parameters], axis=0)  # (5 ,2)
+        channel_analyzers = stack([p['analyzer'] for p in parameters], axis=0)  # (5, 4)
+        channel_detectors = stack([p['detector'] for p in parameters], axis=0)  # (5, 3, 6)
+        return {'distances': channel_distances, 'analyzer': channel_analyzers, 'detector': channel_detectors}
+
+    def to_cadquery(self, unit=None):
+        from cadquery import Assembly, Color
+        d_colors = 'tan', 'tan1', 'tan2', 'tan3', 'tan4'
+        asmbly = Assembly()
+        for arm, c in zip(self.pairs, d_colors):
+            d = arm.to_cadquery(unit=unit)
+            asmbly.add(d, color=Color(c))
+        #asmbly.solve()
+        return asmbly.toCompound()
 
 
 @dataclass
@@ -344,3 +466,20 @@ class Tank:
         p = plot(vdet.values, array(fdet))
         vana, fana = self.triangulate_analyzers(unit=unit)
         p.add_mesh(vana.values, array(fana))
+
+    def mcstas_parameters(self, sample: Variable):
+        from numpy import stack
+        parameters = [channel.mcstas_parameters(sample) for channel in self.channels]
+        y = stack([p['distances'] for p in parameters], axis=0)  # (9, 5, 2)
+        a = stack([p['analyzer'] for p in parameters], axis=0)  # (9, 5, 4)
+        d = stack([p['detector'] for p in parameters], axis=0)  # (9, 5, 3, 6)
+        return {'distances': y, 'analyzer': a, 'detector': d}
+
+    def to_cadquery(self, unit=None):
+        from cadquery import Assembly
+        asmbly = Assembly()
+        for channel in self.channels:
+            asmbly = asmbly.add(channel.to_cadquery(unit=unit))
+
+        #asmbly.solve()
+        return asmbly

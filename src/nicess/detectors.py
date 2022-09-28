@@ -139,13 +139,20 @@ class DiscreteWire(Wire):
 
     @staticmethod
     def scalar_deserialization_targets():
-        return 'elements',
+        return 'elements', False
 
 
 @dataclass
 class DiscreteTube(DiscreteWire):
-    radius: float
-    
+    radius: Variable  # TODO This should have a unit (and so should be a scipp.Variable)
+
+    def __post_init__(self):
+        from .utilities import is_scalar, has_compatible_unit
+        if not is_scalar(self.radius):
+            raise ValueError(f"The provided radius is not a scalar")
+        if not has_compatible_unit(self.radius, 'm'):
+            raise ValueError(f"The provided 'radius' has unit {self.radius.unit} which is not convertible to m")
+
     def triangulate(self, unit=None):
         from .spatial import vector_to_vector_quaternion
         from scipp import vector, vectors, sqrt, dot, isclose, cross, scalar, arange, concat, flatten
@@ -156,7 +163,7 @@ class DiscreteTube(DiscreteWire):
         ll = sqrt(dot(lvec, lvec))
         # *a* vector perpendicular to l
         p = cross(lvec, vector([1., 0, 0]) if isclose(lvec.fields.z, ll) else vector([0, 0, 1.]))
-        p = p/sqrt(dot(p, p)) * scalar(self.radius, unit='mm').to(unit=unit)
+        p = p/sqrt(dot(p, p)) * self.radius.to(unit=unit)
 
         a = arange(start=0, stop=360, step=30, dim='ring', unit='degree')
         r = rotations_from_rotvecs(a*lvec/ll)
@@ -200,22 +207,43 @@ class DiscreteTube(DiscreteWire):
     @property
     def _serialize_data(self):
         from numpy import hstack
-        return hstack((super()._serialize_data, (self.radius, )))
+        return hstack((super()._serialize_data, (self.radius.value, )))
 
     @property
     def _serialize_types(self):
+        from .serialize import scalar_serialize_type
         t = super()._serialize_types
-        t.append(('radius', 'f4'))
+        t.append(scalar_serialize_type(self.radius, 'radius'))
         return t
 
     @staticmethod
     def scalar_deserialization_targets():
-        return 'elements', 'radius'
+        return ('elements', False),  ('radius', True)
+
+    def to_cadquery(self, unit=None):
+        from cadquery import Workplane
+        from scipp import sqrt, dot
+        if unit is None:
+            unit = self.radius.unit  # Make this the radius unit?
+        a = self.at.to(unit=unit)
+        t = self.to.to(unit=unit)
+        v = t - a
+        h = sqrt(dot(v, v)).to(unit=unit)
+        r = self.radius.to(unit=unit).value
+        w = Workplane(origin=tuple(a.value)).cylinder(h.value, r, tuple((v/h).value))
+        return w
 
 
 @dataclass
 class He3Tube(DiscreteTube):
-    pressure: float
+    pressure: Variable
+
+    def __post_init__(self):
+        from .utilities import is_scalar, has_compatible_unit
+        if not is_scalar(self.pressure):
+            raise ValueError(f"The provided pressure is not a scalar")
+        if not has_compatible_unit(self.pressure, 'Pa'):
+            raise ValueError(f"The provided 'pressure' has unit {self.pressure.unit} which is not convertible to Pa")
 
     def __eq__(self, other):
         if not isinstance(other, He3Tube):
@@ -235,10 +263,11 @@ class He3Tube(DiscreteTube):
 
     @property
     def _serialize_types(self):
+        from .serialize import scalar_serialize_type
         t = super()._serialize_types
-        t.append(('pressure', 'f4'))
+        t.append(scalar_serialize_type(self.pressure, 'pressure'))
         return t
 
     @staticmethod
     def scalar_deserialization_targets():
-        return 'elements', 'radius', 'pressure'
+        return ('elements', False),  ('radius', True), ('pressure', True)

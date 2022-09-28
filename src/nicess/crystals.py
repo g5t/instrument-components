@@ -151,11 +151,41 @@ class Crystal(IdealCrystal):
                  [3, 0, 4], [3, 4, 7], [2, 3, 7], [2, 7, 6], [4, 5, 6], [4, 6, 7]]
         return vertices.to(unit=unit) + self.position.to(unit=unit), faces
 
+    def to_cadquery(self, unit=None):
+        from cadquery import Workplane, Solid, Vector
+        from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+        from OCP.gp import gp_Ax2
+        from scipp import vector
+        if unit is None:
+            unit = self.position.unit
+
+        # The origin should be a corner of the crystal ... but our position the center of a face?
+        p = self.position.to(unit=unit)
+        s = self.shape.to(unit=unit)
+        o = p - s/2
+        o.fields.z = p.fields.z  # we do not need to offset along z, only x and y
+
+        origin = Vector(*o.values)
+
+        q_hat = self.momentum_vector/self.momentum
+        local_z = Vector(*q_hat.values)
+
+        # The length is along the local x coordinate, which is along the global y (before the rotation was applied):
+        local_x = self.orientation * vector([1., 0, 0])
+        local_x = Vector(*local_x.values)
+
+        # # We can't use CadQuery's Solid.makeBox because it picks the x-axis direction for us, which is not stable
+        # box = Solid.makeBox(s.fields.x.value, s.fields.y.value, s.fields.z.value, origin, local_z)
+
+        box = Solid(BRepPrimAPI_MakeBox(gp_Ax2(origin.toPnt(), local_z.toDir(), local_x.toDir()),
+                                        s.fields.x.value, s.fields.y.value, s.fields.z.value).Shape())
+
+        return Workplane(obj=box)
+
     def extreme_path_corners(self, horizontal: Variable, vertical: Variable, unit=None):
         from .spatial import combine_extremes
         v, _ = self.triangulate(unit=unit)
         return combine_extremes([v], horizontal, vertical)
-
 
     def __eq__(self, other):
         if not isinstance(other, Crystal):
