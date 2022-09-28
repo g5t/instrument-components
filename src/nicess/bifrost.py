@@ -245,6 +245,8 @@ class Arm:
 
     def to_cadquery(self, unit=None):
         from .spatial import combine_assembly
+        if unit is None:
+            unit = 'mm'
         a = self.analyzer.to_cadquery(unit=unit)
         d = self.detector.to_cadquery(unit=unit)
         # combine a and d into an Assembly?
@@ -344,7 +346,7 @@ class Channel:
         detector_orient = relative_rotation * detector_orient
 
         # coverages = tan(min(ks) * atan(1.0*coverage) / ks)
-        coverages = atan(min(ks) * tan(1.0 * vp['coverage']) / ks)
+        coverages = 2 * atan(min(ks) * tan(1.0 * vp['coverage']) / ks)
 
         per_det = 'analyzer' in detector_orient.dims
         pairs = []
@@ -392,12 +394,11 @@ class Channel:
     def to_cadquery(self, unit=None):
         from cadquery import Assembly, Color
         d_colors = 'tan', 'tan1', 'tan2', 'tan3', 'tan4'
-        asmbly = Assembly()
+        assembly = Assembly()
         for arm, c in zip(self.pairs, d_colors):
             d = arm.to_cadquery(unit=unit)
-            asmbly.add(d, color=Color(c))
-        #asmbly.solve()
-        return asmbly.toCompound()
+            assembly = assembly.add(d, color=Color(c))
+        return assembly.toCompound()
 
 
 @dataclass
@@ -477,9 +478,9 @@ class Tank:
 
     def to_cadquery(self, unit=None):
         from cadquery import Assembly
-        asmbly = Assembly()
+        if unit is None:
+            unit = 'mm'
+        assembly = Assembly()
         for channel in self.channels:
-            asmbly = asmbly.add(channel.to_cadquery(unit=unit))
-
-        #asmbly.solve()
-        return asmbly
+            assembly = assembly.add(channel.to_cadquery(unit=unit))
+        return assembly
