@@ -209,7 +209,7 @@ class Arm:
 
     def mcstas_parameters(self, sample: Variable):
         from numpy import stack, hstack
-        from scipp import sqrt, dot, cross
+        from scipp import sqrt, dot, cross, vector
         from .spatial import is_scipp_vector, perpendicular_directions
         is_scipp_vector(sample, 'sample')
 
@@ -235,10 +235,12 @@ class Arm:
         tube_com = self.detector.tube_com() - self.analyzer.central_blade.position
         tube_end = self.detector.tube_end()
 
+        x, y, z = [vector(q) for q in [[1, 0, 0], [0, 1, 0], [0, 0, 1]]]
+
         # this could be simplified if we built the column matrix (xd, yd, zd)
-        tube_com_x, tube_com_y, tube_com_z = [dot(tube_com, x) * x for x in (xd, yd, zd)]
+        tube_com_x, tube_com_y, tube_com_z = [dot(tube_com, d) * i for d, i in zip((xd, yd, zd), (x, y, z))]
         tube_com_d = tube_com_x + tube_com_y + tube_com_z
-        tube_end_x, tube_end_y, tube_end_z = [dot(tube_end, x) * x for x in (xd, yd, zd)]
+        tube_end_x, tube_end_y, tube_end_z = [dot(tube_end, d) * i for d, i in zip((xd, yd, zd), (x, y, z))]
         tube_end_d = tube_end_x + tube_end_y + tube_end_z
         # shift the COM relative to the expected detector position
         tube_com_d.fields.z -= sqrt(dot(ad, ad))
