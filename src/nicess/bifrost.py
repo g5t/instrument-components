@@ -103,6 +103,10 @@ class Analyzer:
     def central_blade(self):
         return self.blades[len(self.blades) >> 1]
 
+    @property
+    def count(self):
+        return len(self.blades)
+
     @staticmethod
     def from_calibration(position: Variable, focus: Variable, **params):
         from math import pi
@@ -110,7 +114,7 @@ class Analyzer:
         from .spatial import is_scipp_vector
         from .rowland import rowland_blades
         map(lambda x: is_scipp_vector(*x), ((position, 'position'), (focus, 'focus')))
-        count = params.get('count', 9)  # most analyzers have 9 blades
+        count = params.get('blade_count', scalar(9))  # most analyzers have 9 blades
         shape = params.get('shape', vector([10., 200., 2.], unit='mm'))
         orient = params.get('orient', None)
         orient = rotation(value=[0, 0, 0, 1.]) if orient is None else orient
@@ -131,7 +135,7 @@ class Analyzer:
         #
         alpha = coverage # 0.5 * coverage
         # Use the Rowland geometry to define each blade position & normal direction
-        positions, taus = rowland_blades(source, position, focus, alpha, shape.fields.x, count)
+        positions, taus = rowland_blades(source, position, focus, alpha, shape.fields.x, count.value)
         taus *= tau  # convert from directions to full tau vectors
 
         blades = [Crystal(p, t, shape, orient) for p, t in zip(positions, taus)]
@@ -234,14 +238,14 @@ class Arm:
         # this could be simplified if we built the column matrix (xd, yd, zd)
         tube_com_x, tube_com_y, tube_com_z = [dot(tube_com, x) * x for x in (xd, yd, zd)]
         tube_com_d = tube_com_x + tube_com_y + tube_com_z
-        tube_end_x, tube_end_y, tube_end_z =[dot(tube_end, x) * x for x in (xd, yd, zd)]
+        tube_end_x, tube_end_y, tube_end_z = [dot(tube_end, x) * x for x in (xd, yd, zd)]
         tube_end_d = tube_end_x + tube_end_y + tube_end_z
         # shift the COM relative to the expected detector position
         tube_com_d.fields.z -= sqrt(dot(ad, ad))
 
         # this is not good. Can we verify which axis is the coordinate axis and which is the tube axis?
         d = stack((tube_com_d.to(unit='m').values, tube_end_d.to(unit='m').values), axis=1)
-        a = hstack((len(self.analyzer.blades), self.analyzer.central_blade.shape.to(unit='m').value))
+        a = hstack((self.analyzer.count, self.analyzer.central_blade.shape.to(unit='m').value))
 
         return {'distances': distances, 'analyzer': a, 'detector': d}
 
@@ -278,7 +282,7 @@ def known_channel_params():
         'l': [[13.5, 149.9, 2], [15.0, 161.0, 2], [12.0, 170.2, 2], [13.0, 179.3, 2], [14.0, 188.6, 2]],
     }
     known['crystal_shape'] = {k: vectors(values=v, unit='mm', dims=['analyzer']) for k, v in a_shape_mm.items()}
-    known['blade_count'] = array(values=[9, 9, 9, 7, 7], dims=['analyzer'])
+    known['blade_count'] = array(values=[7, 7, 9, 9, 9], dims=['analyzer'])  # two lowest energy analyzer have 7 blades
     known['d_spacing'] = scalar(3.355, unit='angstrom')  # PG(002)
     known['coverage'] = scalar(2., unit='degree')
     known['energy'] = array(values=[2.7, 3.2, 3.7, 4.4, 5.], unit='meV', dims=['analyzer'])
