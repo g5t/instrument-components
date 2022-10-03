@@ -159,6 +159,36 @@ class Analyzer:
         from .spatial import combine_assembly
         return combine_assembly([blade.to_cadquery(unit=unit) for blade in self.blades])
 
+    def coverage(self, sample: Variable):
+        from scipp import sqrt, dot, cross, max, min, atan2
+        # Define a pseudo McStas coordinate system (requiring y is mostly vertical)
+        z = (self.central_blade.position - sample)
+        sa_dist = sqrt(dot(z, z))
+        z = z / sa_dist
+        y = vector([0, 1.0, 0])
+        y = cross(cross(z, y), z)  # in case y is not perpendicular to z
+        y = y / sqrt(dot(y, y))
+        x = cross(y, z)
+        x = x / sqrt(dot(x, x))
+
+        # Define the horizontal (along x) and vertical (along y) extreme points of the array
+        xtr = self.extreme_path_corners(x, y)
+        coverages = [atan2(y=(max(dot(xtr, w)) - min(dot(xtr, w))) / 2., x=sa_dist).to(unit='radian') for w in (x, y)]
+        return tuple(coverages)
+
+    def sample_space_angle(self, sample: Variable):
+        from scipp import dot, atan2
+        z = (self.central_blade.position - sample)
+        sample_space_x = vector([1, 0, 0])
+        sample_space_y = vector([0, 1, 0])
+        return atan2(y=dot(sample_space_y, z), x=dot(sample_space_x, z)).to(unit='radian')
+
+    def rtp_parameters(self, sample: Variable, oop: Variable):
+        from scipp import concat
+        p0 = self.central_blade.position
+        # exploit that for x in zip returns first all the first elements, then all the second elements, etc.
+        x, y, a = [concat(x, dim='blades') for x in zip(*[b.rtp_parameters(sample, p0, oop) for b in self.blades])]
+        return x, y, a
 
 @dataclass
 class Arm:
@@ -247,9 +277,20 @@ class Arm:
 
         # this is not good. Can we verify which axis is the coordinate axis and which is the tube axis?
         d = stack((tube_com_d.to(unit='m').values, tube_end_d.to(unit='m').values), axis=1)
-        a = hstack((self.analyzer.count, self.analyzer.central_blade.shape.to(unit='m').value))
+
+        hc, vc = self.analyzer.coverage(sample)
+        a = hstack((self.analyzer.count, self.analyzer.central_blade.shape.to(unit='m').value, [hc.value, vc.value]))
 
         return {'distances': distances, 'analyzer': a, 'detector': d}
+
+    def rtp_parameters(self, sample: Variable):
+        from scipp import concat, cross, dot, sqrt
+        sa = self.analyzer.central_blade.position - sample
+        ad = (self.detector.tubes[1].at + self.detector.tubes[1].to)/2 - self.analyzer.central_blade.position
+
+        out_of_plane = cross(ad, sa)
+        x, y, angle = self.analyzer.rtp_parameters(sample, out_of_plane)
+        return sqrt(dot(sa, sa)), sqrt(dot(ad, ad)), x, y, angle
 
     def to_cadquery(self, unit=None):
         from .spatial import combine_assembly
@@ -259,6 +300,9 @@ class Arm:
         d = self.detector.to_cadquery(unit=unit)
         # combine a and d into an Assembly?
         return combine_assembly([a, d])
+
+    def sample_space_angle(self, sample: Variable):
+        return self.analyzer.sample_space_angle(sample)
 
 
 def known_channel_params():
@@ -394,10 +438,10 @@ class Channel:
     def mcstas_parameters(self, sample: Variable):
         from numpy import stack
         parameters = [arm.mcstas_parameters(sample) for arm in self.pairs]
-        channel_distances = stack([p['distances'] for p in parameters], axis=0)  # (5 ,2)
-        channel_analyzers = stack([p['analyzer'] for p in parameters], axis=0)  # (5, 4)
-        channel_detectors = stack([p['detector'] for p in parameters], axis=0)  # (5, 3, 6)
-        return {'distances': channel_distances, 'analyzer': channel_analyzers, 'detector': channel_detectors}
+        distances = stack([p['distances'] for p in parameters], axis=0)  # (5 ,2)
+        analyzers = stack([p['analyzer'] for p in parameters], axis=0)  # (5, 6)
+        detectors = stack([p['detector'] for p in parameters], axis=0)  # (5, 3, 2, 3)
+        return {'distances': distances, 'analyzer': analyzers, 'detector': detectors}
 
     def to_cadquery(self, unit=None):
         from cadquery import Assembly, Color
@@ -408,6 +452,18 @@ class Channel:
             assembly = assembly.add(d, color=Color(c))
         return assembly.toCompound()
 
+    def sample_space_angle(self, sample: Variable):
+        return self.pairs[0].sample_space_angle(sample)
+
+    def rtp_parameters(self, sample: Variable):
+        from scipp import concat
+        sa, ad, x, y, angle = zip(*[p.rtp_parameters(sample) for p in self.pairs])
+        sa = concat(sa, dim='pairs')
+        ad = concat(ad, dim='pairs')
+        x7, y7, a7 = [concat(q[:2], dim='pairs') for q in (x, y, angle)]
+        x9, y9, a9 = [concat(q[2:], dim='pairs') for q in (x, y, angle)]
+        return sa, ad, x7, y7, a7, x9, y9, a9
+
 
 @dataclass
 class Tank:
@@ -415,8 +471,7 @@ class Tank:
 
     @staticmethod
     def from_calibration(**params):
-        # by default the channels are ('l', 'sym', 's', 'l', 'sym', 's', 'l', 'sym', 's')
-        channel_params = [{'variant': x} for x in ('l', 'm', 's')]
+        channel_params = [{'variant': x} for x in ('s', 'm', 'l')]
         channel_params = {i: channel_params[i % 3] for i in range(9)}
         # but this can be overridden by specifying an integer-keyed dictionary with the parameters for each channel
         channel_params = params.get('channel_params', channel_params)
@@ -425,6 +480,19 @@ class Tank:
                             array(values=[-40, -30, -20, -10, 0, 10, 20, 30, 40.], unit='degree', dims=['channel']))
 
         channels = [Channel.from_calibration(angles[i], **channel_params[i]) for i in range(9)]
+        return Tank(tuple(channels))
+
+    @staticmethod
+    def unique_from_calibration(**params):
+        channel_params = [{'variant': x} for x in ('s', 'm', 'l')]
+        channel_params = {i: channel_params[i % 3] for i in range(3)}
+        # but this can be overridden by specifying an integer-keyed dictionary with the parameters for each channel
+        channel_params = params.get('channel_params', channel_params)
+        # The central a4 angle for each channel, relative to the reference tank angle
+        angles = params.get('angles',
+                            array(values=[-40, -30, -20, -10, 0, 10, 20, 30, 40.], unit='degree', dims=['channel']))
+
+        channels = [Channel.from_calibration(angles[i], **channel_params[i]) for i in range(3)]
         return Tank(tuple(channels))
 
     def to_secondary(self, **params):
@@ -477,12 +545,13 @@ class Tank:
         p.add_mesh(vana.values, array(fana))
 
     def mcstas_parameters(self, sample: Variable):
-        from numpy import stack
+        from numpy import stack, hstack
         parameters = [channel.mcstas_parameters(sample) for channel in self.channels]
         y = stack([p['distances'] for p in parameters], axis=0)  # (9, 5, 2)
-        a = stack([p['analyzer'] for p in parameters], axis=0)  # (9, 5, 4)
-        d = stack([p['detector'] for p in parameters], axis=0)  # (9, 5, 3, 6)
-        return {'distances': y, 'analyzer': a, 'detector': d}
+        a = stack([p['analyzer'] for p in parameters], axis=0)  # (9, 5, 6)
+        d = stack([p['detector'] for p in parameters], axis=0)  # (9, 5, 3, 2, 3)
+        s = hstack([channel.sample_space_angle(sample).value for channel in self.channels])
+        return {'distances': y, 'analyzer': a, 'detector': d, 'channel': s}
 
     def to_cadquery(self, unit=None):
         from cadquery import Assembly
@@ -492,3 +561,7 @@ class Tank:
         for channel in self.channels:
             assembly = assembly.add(channel.to_cadquery(unit=unit))
         return assembly
+
+    def rtp_parameters(self, sample: Variable):
+        from scipp import concat
+        return [concat(q, dim='channel') for q in zip(*[c.rtp_parameters(sample) for c in self.channels])]

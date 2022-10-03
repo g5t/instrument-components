@@ -130,6 +130,19 @@ class IdealCrystal:
         out = [IdealCrystal(*pack) for pack in zip(pos, tau)]
         return out[0] if len(out) == 1 else out
 
+    def rtp_parameters(self, sample: Variable, center: Variable, out_of_plane: Variable):
+        from scipp import cross, dot, sqrt, atan2
+        y = cross(out_of_plane, center - sample)
+        y /= sqrt(dot(y, y))
+        x = cross(y, out_of_plane)
+        x /= sqrt(dot(x, x))
+
+        pc = self.position - center
+        rtp_x = dot(pc, x)
+        rtp_y = dot(pc, y)
+        rtp_angle = atan2(x=dot(self.tau, -y), y=dot(self.tau, x))
+        return rtp_x, rtp_y, rtp_angle
+
 
 @dataclass
 class Crystal(IdealCrystal):

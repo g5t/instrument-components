@@ -22,7 +22,7 @@ common_channel_params = dict(
 channel_params = {idx: deepcopy(common_channel_params) for idx in range(3)}
 
 variants = {
-    0: {'variant': 'l',
+    2: {'variant': 'l',
         'crystal_shape':
             vectors(unit='mm', dims=dims,
                     values=[[13.5, 149.9, 2], [15.0, 161.0, 2], [12.0, 170.2, 2], [13.0, 179.3, 2], [14.0, 188.6, 2]]),
@@ -36,7 +36,7 @@ variants = {
         'detector_length': array(unit='mm', dims=dims, values=[226.0, 249.0, 267.9, 286.3, 304.8]),
         'sample_analyzer_distance': array(values=[1.189, 1.316, 1.420, 1.521, 1.623], unit='m', dims=dims),
         },
-    2: {'variant': 's',
+    0: {'variant': 's',
         'crystal_shape':
             vectors(unit='mm', dims=dims,
                     values=[[12.0, 134.0, 2], [14.0, 147.1, 2], [11.5, 156.2, 2], [12.0, 165.2, 2], [13.5, 175.6, 2]]),

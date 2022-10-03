@@ -55,7 +55,7 @@ def array_to_c(name: str, data: ndarray):
 
         lidx = itr.multi_index
 
-    return split_long_lines(str)
+    return split_long_lines(str) + '\n'
 
 
 def split_long_lines(s: str, width=80):
@@ -77,19 +77,30 @@ def split_long_lines(s: str, width=80):
     return '\n'.join(outparts)
 
 
-def arrays_to_file(arrays: dict[str, ndarray], filename: Union[str, Path], overwrite=False):
-    values = '\n'.join([array_to_c(k, v) for k, v in arrays.items()])
+def arrays_to_cstring(arrays: dict[str, ndarray]):
+    return '\n'.join([array_to_c(f"params_{k}", v) for k, v in arrays.items()])
 
+
+def write_to_file(output: str, filename: Union[str, Path], overwrite=False):
     if not isinstance(filename, Path):
         filename = Path(filename)
-
     if filename.exists() and not overwrite:
         raise RuntimeError(f"File {filename} exists. Pass overwrite=True to overwrite")
-
     if not filename.parent.exists():
         filename.parent.mkdir(parents=True)
-
     with open(filename, 'w') as f:
-        f.write(values)
+        f.write(output)
 
-    return values
+    return output
+
+
+def arrays_to_file(arrays: dict[str, ndarray], filename: Union[str, Path], overwrite=False):
+    return write_to_file(arrays_to_cstring(arrays), filename, overwrite=overwrite)
+
+
+def arrays_to_instr_file(arrays: dict[str, ndarray], filename: Union[str, Path], overwrite=False):
+    preamble = "DEFINE INSTRUMENT BIFROST_params ()\nDECLARE\n%{\n"
+    body = arrays_to_cstring(arrays)
+    closing = "%}\nINITIALIZE\n%{\n%}\nTRACE\nFINALLY\n%{\n%}\nEND"
+
+    return write_to_file(preamble + body + closing, filename, overwrite=overwrite)
