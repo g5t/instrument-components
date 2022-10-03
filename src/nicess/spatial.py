@@ -1,3 +1,4 @@
+from typing import Any
 from scipp import Variable
 
 
@@ -116,10 +117,10 @@ def perpendicular_directions(direction: Variable):
     return horizontal, vertical
 
 
-def combine_assembly(ws: list):
+def combine_assembly(**ws):
     from cadquery import Assembly
     a = Assembly()
-    for w in ws:
-        a = a.add(w)
+    for name, w in ws.items():
+        a = a.add(w, name=name)
     #a.solve()
     return a.toCompound()

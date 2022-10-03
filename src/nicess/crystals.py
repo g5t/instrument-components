@@ -176,7 +176,7 @@ class Crystal(IdealCrystal):
         p = self.position.to(unit=unit)
         s = self.shape.to(unit=unit)
         o = p - s/2
-        o.fields.z = p.fields.z  # we do not need to offset along z, only x and y
+        # o.fields.z = p.fields.z  # we do not need to offset along z, only x and y
 
         origin = Vector(*o.values)
 
@@ -185,6 +185,8 @@ class Crystal(IdealCrystal):
 
         # The length is along the local x coordinate, which is along the global y (before the rotation was applied):
         local_x = self.orientation * vector([1., 0, 0])
+        # from scipp import sqrt, dot
+        # print(f"local_z length {sqrt(dot(q_hat, q_hat)): c} local_x length {sqrt(dot(local_x, local_x)): c}")
         local_x = Vector(*local_x.values)
 
         # # We can't use CadQuery's Solid.makeBox because it picks the x-axis direction for us, which is not stable

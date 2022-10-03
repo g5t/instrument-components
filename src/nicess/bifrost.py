@@ -91,7 +91,8 @@ class Triplet:
 
     def to_cadquery(self, unit=None):
         from .spatial import combine_assembly
-        return combine_assembly([tube.to_cadquery(unit=unit) for tube in self.tubes])
+        t = {k: tube.to_cadquery(unit=unit) for k, tube in zip(("tube-0", "tube-1", "tube-2"), self.tubes)}
+        return combine_assembly(**t)
 
 
 
@@ -108,17 +109,16 @@ class Analyzer:
         return len(self.blades)
 
     @staticmethod
-    def from_calibration(position: Variable, focus: Variable, **params):
+    def from_calibration(position: Variable, focus: Variable, tau: Variable, **params):
         from math import pi
         from scipp.spatial import rotation
         from .spatial import is_scipp_vector
         from .rowland import rowland_blades
-        map(lambda x: is_scipp_vector(*x), ((position, 'position'), (focus, 'focus')))
+        map(lambda x: is_scipp_vector(*x), ((position, 'position'), (focus, 'focus'), (tau, 'tau')))
         count = params.get('blade_count', scalar(9))  # most analyzers have 9 blades
         shape = params.get('shape', vector([10., 200., 2.], unit='mm'))
         orient = params.get('orient', None)
         orient = rotation(value=[0, 0, 0, 1.]) if orient is None else orient
-        tau = params.get('tau', 2 * pi / params.get('d_spacing', scalar(3.355, unit='angstrom')))  # PG(002)
         # qin_coverage = params.get('qin_coverage', params.get('coverage', scalar(0.1, unit='1/angstrom')))
         coverage = params.get('coverage', scalar(2, unit='degree'))
         source = params.get('source', params.get('sample_position', vector([0, 0, 0], unit='m')))
@@ -133,10 +133,9 @@ class Analyzer:
         # # the angular coverage is given by the triangle with base |k_i| and height |Q_in_plane|/2
         # alpha = atan2(0.5 * qin_coverage, k)  # the angular positions around the Rowland circle are not +/- alpha
         #
-        alpha = coverage # 0.5 * coverage
+        alpha = 0.5 * coverage
         # Use the Rowland geometry to define each blade position & normal direction
-        positions, taus = rowland_blades(source, position, focus, alpha, shape.fields.x, count.value)
-        taus *= tau  # convert from directions to full tau vectors
+        positions, taus = rowland_blades(source, position, focus, alpha, shape.fields.x, count.value, tau)
 
         blades = [Crystal(p, t, shape, orient) for p, t in zip(positions, taus)]
         return Analyzer(tuple(blades))
@@ -157,7 +156,8 @@ class Analyzer:
 
     def to_cadquery(self, unit=None):
         from .spatial import combine_assembly
-        return combine_assembly([blade.to_cadquery(unit=unit) for blade in self.blades])
+        b = {f'blade-{i}': blade.to_cadquery(unit=unit) for i, blade in enumerate(self.blades)}
+        return combine_assembly(**b)
 
     def coverage(self, sample: Variable):
         from scipp import sqrt, dot, cross, max, min, atan2
@@ -196,12 +196,12 @@ class Arm:
     detector: Triplet
 
     @staticmethod
-    def from_calibration(a_position, d_position, d_length, **params):
+    def from_calibration(a_position, tau, d_position, d_length, **params):
         analyzer_orient = params.get('analyzer_orient', None)
         detector_orient = params.get('detector_orient', None)
         # the analyzer focuses on the center tube of the triplet
         a_focus = d_position['tube', 1] if 'tube' in d_position.dims else d_position
-        analyzer = Analyzer.from_calibration(a_position, a_focus, **params, orient=analyzer_orient)
+        analyzer = Analyzer.from_calibration(a_position, a_focus, tau, **params, orient=analyzer_orient)
         detector = Triplet.from_calibration(d_position, d_length, orient=detector_orient)
         return Arm(analyzer, detector)
 
@@ -299,7 +299,7 @@ class Arm:
         a = self.analyzer.to_cadquery(unit=unit)
         d = self.detector.to_cadquery(unit=unit)
         # combine a and d into an Assembly?
-        return combine_assembly([a, d])
+        return combine_assembly(analyzer=a, detector=d)
 
     def sample_space_angle(self, sample: Variable):
         return self.analyzer.sample_space_angle(sample)
@@ -381,6 +381,7 @@ class Channel:
         two_thetas = -2 * asin(0.5 * tau / ks)
         two_theta_vectors = two_thetas * vector([0, -1, 0])
         two_theta_rotation = rotations_from_rotvecs(two_theta_vectors)
+
         # Detector offsets are specified in a frame with x along the scattered beam, y in the plane of the analyzer
         add = 'analyzer_detector_distance'
         detector_vector = vector([1, 0, 0]) * vp[add] + vp['detector_offset'].to(unit=vp[add].unit)
@@ -390,6 +391,8 @@ class Channel:
 
         analyzer_position = sample + relative_rotation * analyzer_vector
         detector_position = sample + relative_rotation * (analyzer_vector + two_theta_rotation * detector_vector)
+
+        tau_vecs = relative_rotation * rotations_from_rotvecs(0.5 * two_theta_vectors) * (tau * vector([0, 0, -1]))
 
         # The detector orientation is given by a displacement vector of the tube-end, we want the associated quaternion
         detector_orient = tube_xz_displacement_to_quaternion(vp['detector_length'], vp['detector_orient'])
@@ -402,12 +405,12 @@ class Channel:
 
         per_det = 'analyzer' in detector_orient.dims
         pairs = []
-        for idx, (ap, dl, ct, cs, cc) in enumerate(zip(
-                analyzer_position, vp['detector_length'], vp['blade_count'], vp['crystal_shape'], coverages
+        for idx, (ap, tv, dl, ct, cs, cc) in enumerate(zip(
+                analyzer_position, tau_vecs, vp['detector_length'], vp['blade_count'], vp['crystal_shape'], coverages
         )):
-            params = dict(sample=sample, blade_count=ct, shape=cs, analyzer_orient=relative_rotation, tau=tau,
-                          coverage=cc, detector_orient=detector_orient['analyzer', idx] if per_det else detector_orient)
-            pairs.append(Arm.from_calibration(ap, detector_position['analyzer', idx], dl, **params))
+            params = dict(sample=sample, blade_count=ct, shape=cs, analyzer_orient=relative_rotation, coverage=cc,
+                          detector_orient=detector_orient['analyzer', idx] if per_det else detector_orient)
+            pairs.append(Arm.from_calibration(ap, tv, detector_position['analyzer', idx], dl, **params))
 
         return Channel(tuple(pairs))
 
@@ -447,9 +450,9 @@ class Channel:
         from cadquery import Assembly, Color
         d_colors = 'tan', 'tan1', 'tan2', 'tan3', 'tan4'
         assembly = Assembly()
-        for arm, c in zip(self.pairs, d_colors):
+        for index, (arm, c) in enumerate(zip(self.pairs, d_colors)):
             d = arm.to_cadquery(unit=unit)
-            assembly = assembly.add(d, color=Color(c))
+            assembly = assembly.add(d, name=f"pair-{index}", color=Color(c))
         return assembly.toCompound()
 
     def sample_space_angle(self, sample: Variable):
@@ -558,8 +561,8 @@ class Tank:
         if unit is None:
             unit = 'mm'
         assembly = Assembly()
-        for channel in self.channels:
-            assembly = assembly.add(channel.to_cadquery(unit=unit))
+        for index, channel in enumerate(self.channels):
+            assembly = assembly.add(channel.to_cadquery(unit=unit), name=f"channel-{index}")
         return assembly
 
     def rtp_parameters(self, sample: Variable):

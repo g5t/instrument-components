@@ -14,6 +14,7 @@ def three_point_circle(p0: Variable, p1: Variable, p2: Variable):
     n = cross(vb, va) / a / b
     if sqrt(dot(n, n)) == scalar(0., unit=n.unit):
         raise RuntimeError("Points are colinear")
+    n /= sqrt(dot(n, n))
     # the bisector of any one of the sides points to the center
     perp = [p / sqrt(dot(p,p)) for v in (-va, vb, -vc) for p in (cross(n, v),)]
     # the length of the bisector is given by the pythagorean theorem
@@ -31,7 +32,10 @@ def three_point_circle(p0: Variable, p1: Variable, p2: Variable):
     # all three z points should be the same:
     if not isclose(z[0], z[1]) or not isclose(z[1], z[2]):
       raise RuntimeError(f"Mismatched central points,\n{p0=}\n{p1=}\n{p2=}\n{z = }")
-    return (z[0]+z[1]+z[2])/3, r, n
+    if z[0] != z[1] or z[1] != z[2]:
+        # Only find the average of the three points if they are not identical to avoid division-by-three weirdness
+        return (z[0]+z[1]+z[2])/3, r, n
+    return z[0], r, n
 
 
 def angle_between(a: Variable, b: Variable):
@@ -53,12 +57,14 @@ def transfer_angular_range(origin: Variable, target: Variable, center: Variable,
     if not isclose(dot(xi, xi), dot(c, c)):
         print(f"{origin = }\n{target = }\n{center = }\n{alpha = }\n{xi = }\n{c = }\n{dot(xi, xi) = }\n{dot(c, c) = }")
         raise RuntimeError("s is not on the circle centered at c and passing through the origin")
-    # directions perpendicular to s in the plane with c
+    # directions along the ray from origin to either side of target
     hats = [sin(alpha) * x/sqrt(dot(x, x)) - cos(alpha) * v for x in (cross(n, v), cross(v, n))]
     # points relative to target where acos(dot(p - origin, target - origin)) == alpha
     ps = [origin + h * 2 * dot(h, xi) for h in hats]
     if not all(isclose(angle_between(p-origin, target-origin), alpha) for p in ps):
         raise RuntimeError(f"Problem finding points at +- alpha\n{ps = }\n{origin = }\n{target = }\n{center = }\n{[angle_between(p-origin, target-origin) for p in ps] = }\n{alpha = }")
+    if not all(isclose(dot(p-center, p-center), dot(c, c)) for p in ps):
+        raise RuntimeError(f"Problem finding points at +- alpha on the Rowland circle")
     # Find the angular range relative to (target - center):
     beta = [angle_between(p - center, target-center) for p in ps]
     return (beta[0] + beta[-1])/2
@@ -74,7 +80,10 @@ def rowland_blade_angles(beta: Variable, radius: Variable, count: int, width: Va
     #       rho_gap = (diff(beta) - N * rho_blade) / (N - 1)
     from scipp import atan2, isclose, scalar, concat
     r_width = 2 * atan2(y=0.5 * width, x=radius.to(unit=width.unit))
+    # r_width = 2 * asin(width / (2 * radius.to(unit=width.unit)))
     r_gap = (2*beta - count * r_width) / (count - 1)
+    # print(f"radial gap {r_gap.to(unit='degree'):c} -> gap width {sin(r_gap) * radius.to(unit=width.unit): c}")
+    # print(f"arc length {2 * beta / scalar(1, unit='radian') * radius.to(unit=width.unit):c} blade width {width:c}")
     angles = [-beta + 0.5 * r_width + index * (r_width + r_gap) for index in range(count)]
     if not isclose(angles[count >> 1], scalar(0., unit='radian')):
         print(f"{beta = }\n{radius = }\n{count = }\n{width = }\n{r_width = }\n{r_gap = }\n{concat(angles,dim='blades') = }")
@@ -84,7 +93,7 @@ def rowland_blade_angles(beta: Variable, radius: Variable, count: int, width: Va
     return concat(angles, 'blade')
 
 
-def rowland_blades(source: Variable, position: Variable, focus: Variable, alpha: Variable, width: Variable, count: int):
+def rowland_blades(source: Variable, position: Variable, focus: Variable, alpha: Variable, width: Variable, count: int, tau: Variable):
     center, radius, normal = three_point_circle(source, position, focus)
     beta = transfer_angular_range(source, position, center, alpha)
     angles = rowland_blade_angles(beta, radius, count, width)
@@ -96,12 +105,9 @@ def rowland_blades(source: Variable, position: Variable, focus: Variable, alpha:
     # *hopefully broadcast* the rotations to the center-to-analyzer-position vector
     blade_positions = rotations * (position - center) + center
 
-    # find the crystal-normal directions; the central one bisects the scattering vector, while the remaining ones
+    # find the crystal-normal directions; the central one is set by Bragg's law, while the remaining ones
     # are rotated by half their Rowland angles
-    from scipp import sqrt, dot
     rotations = rotations_from_rotvecs(rotation_vectors=0.5 * angles * normal)
-    tau = 0.5 * (source + focus) - position
-    tau /= sqrt(dot(tau, tau))
     blade_taus = rotations * tau
 
     return blade_positions, blade_taus
