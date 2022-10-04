@@ -122,6 +122,7 @@ class Analyzer:
         # qin_coverage = params.get('qin_coverage', params.get('coverage', scalar(0.1, unit='1/angstrom')))
         coverage = params.get('coverage', scalar(2, unit='degree'))
         source = params.get('source', params.get('sample_position', vector([0, 0, 0], unit='m')))
+        gap = params.get('gap', None)
         #
         # # Use the crystal lattice and scattering triangle to find k, then angular coverage from Q_in_plane-coverage
         # sa = position - source
@@ -133,9 +134,8 @@ class Analyzer:
         # # the angular coverage is given by the triangle with base |k_i| and height |Q_in_plane|/2
         # alpha = atan2(0.5 * qin_coverage, k)  # the angular positions around the Rowland circle are not +/- alpha
         #
-        alpha = 0.5 * coverage
         # Use the Rowland geometry to define each blade position & normal direction
-        positions, taus = rowland_blades(source, position, focus, alpha, shape.fields.x, count.value, tau)
+        positions, taus = rowland_blades(source, position, focus, coverage, shape.fields.x, count.value, tau, gap)
 
         blades = [Crystal(p, t, shape, orient) for p, t in zip(positions, taus)]
         return Analyzer(tuple(blades))
@@ -308,9 +308,9 @@ class Arm:
 def known_channel_params():
     known = dict()
     dist_sa = {
-        's': [1.100, 1.238, 1.342, 1.433, 1.544],
+        's': [1.100, 1.238, 1.342, 1.443, 1.557],
         'm': [1.189, 1.316, 1.420, 1.521, 1.623],
-        'l': [1.276, 1.388, 1.493, 1.595, 1.697],
+        'l': [1.276, 1.392, 1.497, 1.599, 1.701],
     }
     known['sample_analyzer_distance'] = {k: array(values=v, unit='m', dims=['analyzer']) for k, v in dist_sa.items()}
     known['analyzer_detector_distance'] = known['sample_analyzer_distance']['m']
@@ -323,16 +323,17 @@ def known_channel_params():
     known['detector_offset'] = vectors(values=[[0, 0, -20.], [0, 0, 0], [0, 0, 20]], unit='mm', dims=['tube'])
     known['detector_orient'] = vector([0, 0, 0], unit='mm')
     a_shape_mm = {
-        's': [[12.0, 134.0, 2], [14.0, 147.1, 2], [11.5, 156.2, 2], [12.0, 165.2, 2], [13.5, 175.6, 2]],
-        'm': [[12.5, 142.0, 2], [14.5, 154.1, 2], [11.5, 163.2, 2], [12.5, 172.3, 2], [13.5, 181.6, 2]],
-        'l': [[13.5, 149.9, 2], [15.0, 161.0, 2], [12.0, 170.2, 2], [13.0, 179.3, 2], [14.0, 188.6, 2]],
+        's': [[12.0, 134, 1], [14.0, 147, 1], [11.5, 156, 1], [12.0, 165, 1], [13.5, 177, 1]],
+        'm': [[12.5, 144, 1], [14.5, 156, 1], [11.5, 165, 1], [12.5, 174, 1], [13.5, 183, 1]],
+        'l': [[13.5, 150, 1], [15.0, 162, 1], [12.0, 171, 1], [13.0, 180, 1], [14.0, 189, 1]],
     }
     known['crystal_shape'] = {k: vectors(values=v, unit='mm', dims=['analyzer']) for k, v in a_shape_mm.items()}
     known['blade_count'] = array(values=[7, 7, 9, 9, 9], dims=['analyzer'])  # two lowest energy analyzer have 7 blades
     known['d_spacing'] = scalar(3.355, unit='angstrom')  # PG(002)
     known['coverage'] = scalar(2., unit='degree')
-    known['energy'] = array(values=[2.7, 3.2, 3.7, 4.4, 5.], unit='meV', dims=['analyzer'])
+    known['energy'] = array(values=[2.7, 3.2, 3.8, 4.4, 5.], unit='meV', dims=['analyzer'])
     known['sample'] = vector([0, 0, 0.], unit='m')
+    known['gap'] = array(values=[2, 2, 2, 2, 2.], unit='mm', dims=['analyzer'])
     known['variant'] = 'm'
     return known
 
@@ -401,15 +402,20 @@ class Channel:
         detector_orient = relative_rotation * detector_orient
 
         # coverages = tan(min(ks) * atan(1.0*coverage) / ks)
-        coverages = 2 * atan(min(ks) * tan(1.0 * vp['coverage']) / ks)
+        coverages = atan(min(ks) * tan(1.0 * vp['coverage']) / ks)
+
+        print(f"Vertical coverage = {coverages.to(unit='degree'): c}")
 
         per_det = 'analyzer' in detector_orient.dims
         pairs = []
-        for idx, (ap, tv, dl, ct, cs, cc) in enumerate(zip(
-                analyzer_position, tau_vecs, vp['detector_length'], vp['blade_count'], vp['crystal_shape'], coverages
+        for idx, (ap, tv, dl, ct, cs, cc, gp) in enumerate(zip(
+                analyzer_position, tau_vecs, vp['detector_length'], vp['blade_count'], vp['crystal_shape'], coverages,
+                vp['gap']
         )):
             params = dict(sample=sample, blade_count=ct, shape=cs, analyzer_orient=relative_rotation, coverage=cc,
-                          detector_orient=detector_orient['analyzer', idx] if per_det else detector_orient)
+                          detector_orient=detector_orient['analyzer', idx] if per_det else detector_orient,
+                          gap=gp
+                          )
             pairs.append(Arm.from_calibration(ap, tv, detector_position['analyzer', idx], dl, **params))
 
         return Channel(tuple(pairs))
@@ -459,13 +465,19 @@ class Channel:
         return self.pairs[0].sample_space_angle(sample)
 
     def rtp_parameters(self, sample: Variable):
-        from scipp import concat
+        from scipp import concat, all, isclose
         sa, ad, x, y, angle = zip(*[p.rtp_parameters(sample) for p in self.pairs])
         sa = concat(sa, dim='pairs')
         ad = concat(ad, dim='pairs')
         x7, y7, a7 = [concat(q[:2], dim='pairs') for q in (x, y, angle)]
         x9, y9, a9 = [concat(q[2:], dim='pairs') for q in (x, y, angle)]
-        return sa, ad, x7, y7, a7, x9, y9, a9
+
+        relative_angles = [arm.sample_space_angle(sample) for arm in self.pairs]
+        ra0 = relative_angles[0]
+        if not all(isclose(concat(relative_angles, dim='arm'), ra0)):
+            raise RuntimeError("different relative angles for same-channel analyzers?!")
+
+        return sa, ad, x7, y7, a7, x9, y9, a9, ra0
 
 
 @dataclass
@@ -556,13 +568,18 @@ class Tank:
         s = hstack([channel.sample_space_angle(sample).value for channel in self.channels])
         return {'distances': y, 'analyzer': a, 'detector': d, 'channel': s}
 
-    def to_cadquery(self, unit=None):
+    def to_cadquery(self, unit=None, add_sphere_at_origin=False):
         from cadquery import Assembly
         if unit is None:
             unit = 'mm'
         assembly = Assembly()
         for index, channel in enumerate(self.channels):
             assembly = assembly.add(channel.to_cadquery(unit=unit), name=f"channel-{index}")
+
+        if add_sphere_at_origin:
+            from cadquery import Workplane
+            w = Workplane().sphere(radius=0.5)
+            assembly.add(w, name='origin')
         return assembly
 
     def rtp_parameters(self, sample: Variable):
