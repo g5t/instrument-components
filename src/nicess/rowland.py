@@ -90,8 +90,9 @@ def rowland_blade_angles(beta: Variable, radius: Variable, count: int, width: Va
         # r_gap = 2 * atan2(y=0.5 * gap, x=radius.to(unit=gap.unit))
         r_width = (2 * beta - (count - 1) * r_gap) / count
 
-    real_gap = sin((r_width - 2*atan2(y=0.5 * width, x=radius.to(unit=width.unit))) + r_gap) * radius.to(unit=width.unit)
-    print(f"Expected gap width {sin(r_gap) * radius.to(unit=width.unit): c}, Real {real_gap:c}")
+    # re_g = sin((r_width - 2*atan2(y=0.5 * width, x=radius.to(unit=width.unit))) + r_gap) * radius.to(unit=width.unit)
+    # print(f"Expected gap width {sin(r_gap) * radius.to(unit=width.unit): c}, Real {re_g:c}")
+
     # print(f"arc length {2 * beta / scalar(1, unit='radian') * radius.to(unit=width.unit):c} blade width {width:c}")
     # angles = [-beta + 0.5 * r_width + index * (r_width + r_gap) for index in range(count)]
     half_count = count >> 1
