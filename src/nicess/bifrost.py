@@ -404,7 +404,7 @@ class Channel:
         # coverages = tan(min(ks) * atan(1.0*coverage) / ks)
         coverages = atan(min(ks) * tan(1.0 * vp['coverage']) / ks)
 
-        print(f"Vertical coverage = {coverages.to(unit='degree'): c}")
+        # print(f"Vertical coverage = {coverages.to(unit='degree'): c}")
 
         per_det = 'analyzer' in detector_orient.dims
         pairs = []
@@ -580,6 +580,9 @@ class Tank:
             from cadquery import Workplane
             w = Workplane().sphere(radius=0.5)
             assembly.add(w, name='origin')
+
+        assembly.name = 'BIFROST-secondary'
+
         return assembly
 
     def rtp_parameters(self, sample: Variable):
