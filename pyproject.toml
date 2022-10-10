@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0", "setuptools_scm[toml]>=6.2", "pytest"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+
+[project]
+name = "nicess"
+authors = [{name="Gregory Tucker", email="gregory.tucker@ess.eu"},]
+description = "Neutron Instrument Components for the European Spallation Source"
+readme= "README.md"
+license = {file="LICENSE"}
+requires-python = ">=3.9"
+dynamic = ["version"]
+dependencies = ["scipp>=0.16",  "numpy>=1.23.3", "scipy"]
+optional-dependencies = {io=["h5py>=3.7.0", ], test=["pytest", "pytest-cov[all]"]}
+
+[project.urls]
+"Homepage" = "https://g5t.github.io/nicess"
+"Repository" = "https://github.com/g5t/nicess"
+"Bug Tracker" = "https://github.com/g5t/nicess/issues"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+filterwarnings = ["error"]
+log_cli_level = "info"
+testpaths = ["tests"]
