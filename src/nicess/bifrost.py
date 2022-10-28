@@ -37,6 +37,7 @@ class BIFROST:
 @dataclass
 class Triplet:
     tubes: tuple[He3Tube, He3Tube, He3Tube]
+    resistances: Variable
 
     @staticmethod
     def from_calibration(position: Variable, length: Variable, **params):
@@ -55,17 +56,37 @@ class Triplet:
         pressure = params.get('pressure', scalar(1., unit='atm'))
         radius = params.get('radius', scalar(10., unit='mm'))
         elements = params.get('elements', 10)
+        resistivity = params.get('resistivity', scalar(140., unit='Ohm/in').to(unit='Ohm/m'))
         map(lambda x: __is_type__(*x), ((pressure, Variable, 'pressure'), (length, Variable, 'length'),
-                                        (radius, Variable, 'radius'), (elements, int, 'elements')))
+                                        (radius, Variable, 'radius'), (elements, int, 'elements'),
+                                        (resistivity, Variable, 'resistivity')))
         # pack the tube parameters
         pack = elements, radius, pressure
+
+        # ensure that there is one resistivity per tube
+        from .utilities import is_scalar
+        from scipp import concat
+        if is_scalar(resistivity):
+            resistivity = concat((resistivity, resistivity, resistivity), dim='tube')
 
         # Make the oriented tube-axis vector(s)
         axis = ori * (length.to(unit=position.unit) * vector([0, 1., 0]))  # may be a 0-D or 1-D (tube) vector array
         tube_at = position - 0.5 * axis  # should now be a 1-D (tube) vector array
         tube_to = position + 0.5 * axis  # *ditto*
-        tubes = (He3Tube(at, to, *pack) for at, to in zip(tube_at, tube_to))
-        return Triplet(tuple(tubes))
+        tubes = (He3Tube(at, to, rho, *pack) for at, to, rho in zip(tube_at, tube_to, resistivity))
+
+        # Define the ex-Tube resistances
+        resistance = params.get('resistance', scalar(2, unit='Ohm'))
+        if is_scalar(resistance):
+            resistance = concat((resistance, resistance), dim='tube')
+        if len(resistance) < 3:
+            contact = params.get('contact_resistance', scalar(0, unit='Ohm'))
+            resistance = concat((contact, resistance, contact), dim='tube')
+        for idx, name in enumerate(('resistance_A', 'resistance_01', 'resistance_12', 'resistance_B')):
+            if name in params:
+                resistance['tube', idx] = params.get(name)
+
+        return Triplet(tuple(tubes), resistance)
 
     def triangulate(self, unit=None):
         from .spatial import combine_triangulations
@@ -94,6 +115,19 @@ class Triplet:
         t = {k: tube.to_cadquery(unit=unit) for k, tube in zip(("tube-0", "tube-1", "tube-2"), self.tubes)}
         return combine_assembly(**t)
 
+    def a_over_a_plus_b_edges(self):
+        """Points to convert continuous A/(A+B) to discrete segments per tube"""
+        from scipp import concat, scalar, cumsum, max
+        tr = [1.0 * t.resistance for t in self.tubes]
+        rs = [scalar(0., unit='Ohm'), *[x for a in zip(self.resistances, tr) for x in a], self.resistances[-1]]
+        # rs is [0, left_contact, left_tube, left_resistor, center_tube, right_resistor, right_tube, right_contact]
+        partial_sums = cumsum(concat(rs, dim='tube'))
+        return partial_sums / max(partial_sums)
+
+    def a_minus_b_over_a_plus_b_edges(self):
+        """Points to convert continuous (A-B)/(A+B) to discrete segments per tube"""
+        from scipp import scalar
+        return 2 * self.a_over_a_plus_b_edges() - scalar(1)
 
 
 @dataclass
@@ -202,7 +236,7 @@ class Arm:
         # the analyzer focuses on the center tube of the triplet
         a_focus = d_position['tube', 1] if 'tube' in d_position.dims else d_position
         analyzer = Analyzer.from_calibration(a_position, a_focus, tau, **params, orient=analyzer_orient)
-        detector = Triplet.from_calibration(d_position, d_length, orient=detector_orient)
+        detector = Triplet.from_calibration(d_position, d_length, **params, orient=detector_orient)
         return Arm(analyzer, detector)
 
     def triangulate_detector(self, unit=None):
@@ -335,6 +369,11 @@ def known_channel_params():
     known['sample'] = vector([0, 0, 0.], unit='m')
     known['gap'] = array(values=[2, 2, 2, 2, 2.], unit='mm', dims=['analyzer'])
     known['variant'] = 'm'
+
+    known['resistance'] = scalar(2., unit='Ohm')
+    known['contact_resistance'] = scalar(0., unit='Ohm')
+    known['resistivity'] = scalar(140., unit='Ohm/in').to(unit='Ohm/m')
+
     return known
 
 
@@ -369,6 +408,7 @@ class Channel:
         from scipp import sqrt, tan, atan, asin, min
         from scipp.constants import hbar, neutron_mass
         from scipp.spatial import rotations_from_rotvecs
+
 
         vp = variant_parameters(params, known_channel_params())
 
@@ -406,14 +446,27 @@ class Channel:
 
         # print(f"Vertical coverage = {coverages.to(unit='degree'): c}")
 
-        per_det = 'analyzer' in detector_orient.dims
+        resistance = vp['resistance']
+        resistivity = vp['resistivity']
+        from .utilities import is_scalar
+        from scipp import concat
+        if is_scalar(resistance):
+            contact_resistance = vp['contact_resistance']
+            resistance = concat((contact_resistance, resistance, resistance, contact_resistance), dim='tube')
+        if is_scalar(resistivity):
+            resistivity = concat((resistivity, resistivity, resistivity), dim='tube')
+
+        orient_per, resistance_per, resistivity_per = ['analyzer' in x.dims for x in
+                                                       (detector_orient, resistance, resistivity)]
         pairs = []
         for idx, (ap, tv, dl, ct, cs, cc, gp) in enumerate(zip(
                 analyzer_position, tau_vecs, vp['detector_length'], vp['blade_count'], vp['crystal_shape'], coverages,
                 vp['gap']
         )):
             params = dict(sample=sample, blade_count=ct, shape=cs, analyzer_orient=relative_rotation, coverage=cc,
-                          detector_orient=detector_orient['analyzer', idx] if per_det else detector_orient,
+                          detector_orient=detector_orient['analyzer', idx] if orient_per else detector_orient,
+                          resistance=resistance['analyzer', idx] if resistance_per else resistance,
+                          resistivity=resistivity['analyzer', idx] if resistivity_per else resistivity,
                           gap=gp
                           )
             pairs.append(Arm.from_calibration(ap, tv, detector_position['analyzer', idx], dl, **params))

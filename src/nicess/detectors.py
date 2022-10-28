@@ -8,6 +8,7 @@ from .serialize import vector_deserialize, vector_serialize_types
 class Wire:
     at: Variable
     to: Variable
+    resistivity: Variable
 
     def extreme_path_corners(self, horizontal: Variable, vertical: Variable, unit=None):
         from .spatial import combine_extremes
@@ -33,6 +34,17 @@ class Wire:
             raise RuntimeError("Wire end point, to, must be a scipp.DType('vector3')")
         if self.to.unit != self.at.unit:
             raise RuntimeError("Wire end points must have the same unit")
+        from .utilities import is_scalar, has_compatible_unit
+        if not is_scalar(self.resistivity):
+            raise ValueError(f"The provided radius is not a scalar")
+        if not has_compatible_unit(self.resistivity, 'Ohm/m'):
+            raise ValueError(f"Provided unit {self.resistivity.unit} is not convertible to Ohm/m")
+
+    @property
+    def resistance(self) -> Variable:
+        from scipp import sqrt, dot
+        v = self.to - self.at
+        return self.resistivity * sqrt(dot(v, v))
 
     @property
     def center_of_mass(self) -> Variable:

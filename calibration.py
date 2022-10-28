@@ -1,4 +1,4 @@
-from scipp import scalar, array, vectors
+from scipp import scalar, array, vectors, ones, zeros
 from copy import deepcopy
 
 dims = ['analyzer']
@@ -17,6 +17,9 @@ common_channel_params = dict(
                                     [[0, 0., 0], [0, 0., 0], [0, 0., 0], [0, 0., 0], [0, 0., 0]],
                                     [[0, 20., 0], [0, 20., 0], [0, 20., 0], [0, 20., 0], [0, 20., 0]]]),
     analyzer_detector_distance=array(values=[1.189, 1.316, 1.420, 1.521, 1.623], unit='m', dims=dims),
+    resitivity=140. * ones(dims=['tube', 'analyzer'], shape=[3, 5], unit='Ohm/in').to(unit='Ohm/m'),
+    resistance=array(dims=['tube', 'analyzer'], unit='Ohm',
+                     values=[[0., 2, 2, 0], [0., 2, 2, 0], [0., 2, 2, 0], [0., 2, 2, 0], [0., 2, 2, 0]]),
 )
 # deep-copy ensures the changing any per-channel parameters will not affect the other channels
 channel_params = {idx: deepcopy(common_channel_params) for idx in range(3)}

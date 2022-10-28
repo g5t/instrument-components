@@ -10,3 +10,5 @@ dependencies:
   - meshplot
   - h5py
   - jupyterlab
+  - ipympl
+  - matplotlib
