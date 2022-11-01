@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple, Union
 from h5py import File, Group
-from scipp import Variable, vector
+from scipp import Variable, vector, zeros
 
 from .detectors import DiscreteTube
 from .crystals import IdealCrystal
@@ -86,6 +86,8 @@ class IndirectSecondary:
     analyzers: List[IdealCrystal]
     analyzer_per_detector: List[int]
     sample_at: Variable = field(default_factory=lambda: vector([0., 0., 0.], unit='m'))
+    analyzer_map: Variable = field(default_factory=lambda: zeros(shape=[0, 0], dims=['channel', 'pair']))
+    detector_map: Variable = field(default_factory=lambda: zeros(shape=[0, 0, 0], dims=['channel', 'pair', 'tube']))
 
     def __eq__(self, other):
         if not isinstance(other, IndirectSecondary):
@@ -141,11 +143,10 @@ class IndirectSecondary:
         a = self.analyzers[analyzer].position
         return a - self.sample_at.to(unit=a.unit)
 
-    def _detector_partial_vectors(self, detector, element) \
+    def _detector_partial_vectors(self, detector: int, d: Variable) \
             -> Tuple[Variable, Variable, Variable, Variable, Variable, Variable, Variable, Variable]:
         from scipp import dot, sqrt
         # TODO CONTINUE!
-        d = self.detector_vector(detector, element)
 
         analyzer = self.analyzer_per_detector[detector]
         a = self._analyzer_center(analyzer)
@@ -170,9 +171,19 @@ class IndirectSecondary:
         p = self.detectors[detector].index_position(element)
         return p - self.sample_at.to(unit=p.unit)
 
-    def analyzer_vector(self, detector, element) -> Variable:
-        a, f, d_n, a_n, _, _, _, _ = self._detector_partial_vectors(detector, element)
+    def continuous_detector_vector(self, detector, ratio) -> Variable:
+        p = self.detectors[detector].continuous_position(ratio)
+        return p - self.sample_at.to(unit=p.unit)
+
+    def _analyzer_vector(self, detector, d) -> Variable:
+        a, _, _, a_n, _, _, _, _ = self._detector_partial_vectors(detector, d)
         return a + a_n
+
+    def analyzer_vector(self, detector, element) -> Variable:
+        return self._analyzer_vector(detector, self.detector_vector(detector, element))
+
+    def continuous_analyzer_vector(self, detector, ratio) -> Variable:
+        return self._analyzer_vector(detector, self.continuous_detector_vector(detector, ratio))
 
     def final_direction(self, detector, element) -> Variable:
         from scipp import sqrt, dot
@@ -180,10 +191,21 @@ class IndirectSecondary:
         a = sqrt(dot(av, av))
         return av / a
 
-    def final_distance(self, detector, element) -> Variable:
+    def continuous_final_direction(self, detector, ratio) -> Variable:
+        from scipp import sqrt, dot
+        av = self.continuous_analyzer_vector(detector, ratio)
+        return av / sqrt(dot(av, av))
+
+    def _final_distance(self, detector, d: Variable) -> Variable:
         from scipp import sqrt
-        _, _, _, _, la, lf, ld_n, _ = self._detector_partial_vectors(detector, element)
+        _, _, _, _, la, lf, ld_n, _ = self._detector_partial_vectors(detector, d)
         return sqrt((la + lf) * (la + lf) + ld_n * ld_n)
+
+    def final_distance(self, detector, element) -> Variable:
+        return self._final_distance(detector, self.detector_vector(detector, element))
+
+    def continuous_final_distance(self, detector, ratio) -> Variable:
+        return self._final_distance(detector, self.continuous_detector_vector(detector, ratio))
 
     def add_to_hdf(self, obj: Union[File, Group]):
         group = obj.create_group('IndirectSecondary')
@@ -225,3 +247,70 @@ class IndirectSecondary:
         sample_at = vector_deserialize(obj['sample'], 'sample').squeeze()
 
         return IndirectSecondary(detectors, analyzers, analyzer_per_detector, sample_at)
+
+    def broadcast_continuous_theta(self, detector_index: Variable, ratio: Variable):
+        from scipp import concat, scalar, dot, sqrt, acos
+        dim = detector_index.dims[0]
+
+        detectors = [self.detectors[i] for i in detector_index.values]
+
+        at = concat([d.at for d in detectors], dim=dim)
+        to = concat([d.to for d in detectors], dim=dim)
+
+        d = (scalar(1) - ratio) * at + ratio * to
+
+        analyzers = [self.analyzer_per_detector[i] for i in detector_index.values]
+        a = concat([self._analyzer_center(analyzer) for analyzer in analyzers], dim=dim)
+        n = concat([self.scattering_plane_normal(analyzer) for analyzer in analyzers], dim=dim)
+
+        d_dot_n = dot(d, n)
+        d_n = d_dot_n * n
+
+        # the vector from the analyzer center to in-plane detector position is the scattered wavevector direction
+        f = d - d_n - a
+
+        mod_a = sqrt(dot(a, a))
+        mod_d_n = sqrt(dot(d_n, d_n))
+        mod_f = sqrt(dot(f, f))
+
+        mod_a_n = (mod_a / (mod_a + mod_f)) * mod_d_n
+        a_n = mod_a_n * n
+
+        # sample to analyzer vector
+        sa = a + a_n
+        # analyzer to detector vector
+        sd = d - self.sample_at - sa
+        # have an angle between them which is 2*theta
+        two_theta = acos(dot(sa, sd) / sqrt(dot(sa, sa)) / sqrt(dot(sd, sd)))
+
+        return two_theta / scalar(2)
+
+    def broadcast_continuous_final_distance(self, detector_index: Variable, ratio: Variable):
+        from scipp import concat, scalar, dot, sqrt, acos
+        dim = detector_index.dims[0]
+
+        detectors = [self.detectors[i] for i in detector_index.values]
+
+        at = concat([d.at for d in detectors], dim=dim)
+        to = concat([d.to for d in detectors], dim=dim)
+
+        d = (scalar(1) - ratio) * at + ratio * to
+
+        analyzers = [self.analyzer_per_detector[i] for i in detector_index.values]
+        a = concat([self._analyzer_center(analyzer) for analyzer in analyzers], dim=dim)
+        n = concat([self.scattering_plane_normal(analyzer) for analyzer in analyzers], dim=dim)
+
+        d_dot_n = dot(d, n)
+        d_n = d_dot_n * n
+
+        # the vector from the analyzer center to in-plane detector position is the scattered wavevector direction
+        f = d - d_n - a
+
+        mod_a = sqrt(dot(a, a))
+        mod_d_n = sqrt(dot(d_n, d_n))
+        mod_f = sqrt(dot(f, f))
+
+        mod_a_n = (mod_a / (mod_a + mod_f)) * mod_d_n
+        a_n = mod_a_n * n
+
+        return sqrt((mod_a + mod_f) * (mod_a + mod_f) + mod_d_n * mod_d_n)

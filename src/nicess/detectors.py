@@ -55,10 +55,15 @@ class Wire:
             raise RuntimeError("Sum of a and b must not zero")
         return self._charge_position(a/(a+b), b/(a+b))
 
-    def _charge_position(self, fa, fb) -> Variable:
+    def _charge_position(self, fb, fa) -> Variable:
         if fb < 0 or fb > 1 or fa < 0 or fa > 1:
             raise RuntimeError("Both a and b should have the same sign")
         return fa * self.at + fb * self.to
+
+    def continuous_position(self, fa) -> Variable:
+        if fa < 0 or fa > 1:
+            raise RuntimeError("Relative distance from at must be between 0 and 1")
+        return (1 - fa) * self.at + fa * self.to
 
     @property
     def _serialize_types(self):

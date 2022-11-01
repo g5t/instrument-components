@@ -273,7 +273,7 @@ class Arm:
 
     def mcstas_parameters(self, sample: Variable):
         from numpy import stack, hstack
-        from scipp import sqrt, dot, cross, vector
+        from scipp import sqrt, dot, cross, vector, acos
         from .spatial import is_scipp_vector, perpendicular_directions
         is_scipp_vector(sample, 'sample')
 
@@ -284,7 +284,6 @@ class Arm:
 
         sa = self.analyzer.central_blade.position - sample
         ad = (self.detector.tubes[1].at + self.detector.tubes[1].to)/2 - self.analyzer.central_blade.position
-
         distances = [sqrt(dot(x, x)).to(unit='m').value for x in (sa, ad)]
         # the coordinate system here has 'local' x along the beam, and z vertical
         # the McStas local cooridnate system always has z along the beam and y defines the local scattering plane normal
@@ -295,6 +294,8 @@ class Arm:
         yd = cross(za, zd)
         yd /= sqrt(dot(yd, yd))
         xd = cross(yd, zd)
+
+        two_theta = acos(dot(za, zd))
 
         tube_com = self.detector.tube_com() - self.analyzer.central_blade.position
         tube_end = self.detector.tube_end()
@@ -315,7 +316,7 @@ class Arm:
         hc, vc = self.analyzer.coverage(sample)
         a = hstack((self.analyzer.count, self.analyzer.central_blade.shape.to(unit='m').value, [hc.value, vc.value]))
 
-        return {'distances': distances, 'analyzer': a, 'detector': d}
+        return {'distances': distances, 'analyzer': a, 'detector': d, 'two_theta': two_theta.value}
 
     def rtp_parameters(self, sample: Variable):
         from scipp import concat, cross, dot, sqrt
@@ -503,7 +504,8 @@ class Channel:
         distances = stack([p['distances'] for p in parameters], axis=0)  # (5 ,2)
         analyzers = stack([p['analyzer'] for p in parameters], axis=0)  # (5, 6)
         detectors = stack([p['detector'] for p in parameters], axis=0)  # (5, 3, 2, 3)
-        return {'distances': distances, 'analyzer': analyzers, 'detector': detectors}
+        two_theta = stack([p['two_theta'] for p in parameters], axis=0)  # (5, )
+        return {'distances': distances, 'analyzer': analyzers, 'detector': detectors, 'two_theta': two_theta}
 
     def to_cadquery(self, unit=None):
         from cadquery import Assembly, Color
@@ -570,12 +572,18 @@ class Tank:
         analyzers = []
         a_per_d = []
         for channel in self.channels:
-            for analyzer, triplet in zip(channel.analyzers, channel.detectors):
-                analyzers.append(analyzer.central_blade)
-                detectors.extend(triplet.tubes)
-                a_per_d.extend([len(analyzers) - 1 for _ in triplet.tubes])
+            for arm in channel.pairs:
+                analyzers.append(arm.analyzer.central_blade)
+                detectors.extend(arm.detector.tubes)
+                a_per_d.extend([len(analyzers) - 1 for _ in arm.detector.tubes])
 
-        return IndirectSecondary(detectors, analyzers, a_per_d, sample_at)
+        from scipp import arange
+        nc = len(self.channels)
+        np = len(self.channels[0].pairs)
+        a = arange(start=0, stop=len(analyzers), dim='n').fold('n', sizes={'channel': nc, 'pair': np})
+        d = arange(start=0, stop=len(detectors), dim='n').fold('n', sizes={'channel': nc, 'pair': np, 'tube': 3})
+
+        return IndirectSecondary(detectors, analyzers, a_per_d, sample_at, a, d)
 
     def triangulate_detectors(self, unit=None):
         from .spatial import combine_triangulations
@@ -618,8 +626,9 @@ class Tank:
         y = stack([p['distances'] for p in parameters], axis=0)  # (9, 5, 2)
         a = stack([p['analyzer'] for p in parameters], axis=0)  # (9, 5, 6)
         d = stack([p['detector'] for p in parameters], axis=0)  # (9, 5, 3, 2, 3)
+        t = stack([p['two_theta'] for p in parameters], axis=0)  # (9, 5)
         s = hstack([channel.sample_space_angle(sample).value for channel in self.channels])
-        return {'distances': y, 'analyzer': a, 'detector': d, 'channel': s}
+        return {'distances': y, 'analyzer': a, 'detector': d, 'channel': s, 'two_theta': t}
 
     def to_cadquery(self, unit=None, add_sphere_at_origin=False):
         from cadquery import Assembly
