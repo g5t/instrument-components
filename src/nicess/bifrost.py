@@ -355,7 +355,7 @@ def known_channel_params():
         'l': [233.9, 255.9, 274.9, 293.4, 311.9],
     }
     known['detector_length'] = {k: array(values=v, unit='mm', dims=['analyzer']) for k, v in d_length_mm.items()}
-    known['detector_offset'] = vectors(values=[[0, 0, -20.], [0, 0, 0], [0, 0, 20]], unit='mm', dims=['tube'])
+    known['detector_offset'] = vectors(values=[[0, 0, -14.], [0, 0, 0], [0, 0, 14]], unit='mm', dims=['tube'])
     known['detector_orient'] = vector([0, 0, 0], unit='mm')
     a_shape_mm = {
         's': [[12.0, 134, 1], [14.0, 147, 1], [11.5, 156, 1], [12.0, 165, 1], [13.5, 177, 1]],
