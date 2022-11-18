@@ -76,6 +76,16 @@ def continuous_events(hdf_data):
     return DataArray(data=i, coords=coords)
 
 
+def load_readouts(filename, groupname=None):
+    from h5py import File
+    with File(filename) as file:
+        if groupname is None:
+            groups = list(filter(lambda x: '_readouts' in x, list(file)))
+            groupname = groups[0]
+        data = continuous_events(file[groupname])
+    return data
+
+
 def load_bifrost_readouts(filename):
     from h5py import File
     with File(filename) as file:
