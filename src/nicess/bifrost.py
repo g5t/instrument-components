@@ -354,7 +354,8 @@ def known_channel_params():
         'm': [226.0, 249.0, 267.9, 286.3, 304.8],
         'l': [233.9, 255.9, 274.9, 293.4, 311.9],
     }
-    known['detector_length'] = {k: array(values=v, unit='mm', dims=['analyzer']) for k, v in d_length_mm.items()}
+    dex = scalar(10, unit='mm')  # The detector tubes were ordered with 10 mm extra length buffer
+    known['detector_length'] = {k: dex + array(values=v, unit='mm', dims=['analyzer']) for k, v in d_length_mm.items()}
     known['detector_offset'] = vectors(values=[[0, 0, -14.], [0, 0, 0], [0, 0, 14]], unit='mm', dims=['tube'])
     known['detector_orient'] = vector([0, 0, 0], unit='mm')
     a_shape_mm = {
@@ -371,9 +372,9 @@ def known_channel_params():
     known['gap'] = array(values=[2, 2, 2, 2, 2.], unit='mm', dims=['analyzer'])
     known['variant'] = 'm'
 
-    known['resistance'] = scalar(2., unit='Ohm')
+    known['resistance'] = scalar(380., unit='Ohm')
     known['contact_resistance'] = scalar(0., unit='Ohm')
-    known['resistivity'] = scalar(140., unit='Ohm/in').to(unit='Ohm/m')
+    known['resistivity'] = scalar(200., unit='Ohm/in').to(unit='Ohm/m')
 
     return known
 
