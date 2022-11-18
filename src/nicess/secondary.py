@@ -137,7 +137,7 @@ class IndirectSecondary:
 
         # the cross product: tau x a
         n = cross(tau / mod_q, a / mod_a)
-        return n
+        return n / sqrt(dot(n, n))
 
     def _analyzer_center(self, analyzer) -> Variable:
         a = self.analyzers[analyzer].position
@@ -248,7 +248,7 @@ class IndirectSecondary:
 
         return IndirectSecondary(detectors, analyzers, analyzer_per_detector, sample_at)
 
-    def broadcast_continuous_theta(self, detector_index: Variable, ratio: Variable):
+    def _broadcast_continuous_per_tube(self, detector_index: Variable):
         from scipp import concat, scalar, dot, sqrt, acos
         dim = detector_index.dims[0]
 
@@ -257,60 +257,119 @@ class IndirectSecondary:
         at = concat([d.at for d in detectors], dim=dim)
         to = concat([d.to for d in detectors], dim=dim)
 
-        d = (scalar(1) - ratio) * at + ratio * to
+        sd = (at + to) / 2.0 - self.sample_at
 
         analyzers = [self.analyzer_per_detector[i] for i in detector_index.values]
-        a = concat([self._analyzer_center(analyzer) for analyzer in analyzers], dim=dim)
+        sac = concat([self._analyzer_center(analyzer) for analyzer in analyzers], dim=dim)
         n = concat([self.scattering_plane_normal(analyzer) for analyzer in analyzers], dim=dim)
 
-        d_dot_n = dot(d, n)
-        d_n = d_dot_n * n
+        # sample-to-detection-point vector component which is *out of the nominal scattering plane*
+        # # This *SHOULD BE* zero for the tube-centre, unless if the tube is off centre
+        d_dot_n = dot(sd, n)
 
-        # the vector from the analyzer center to in-plane detector position is the scattered wavevector direction
-        f = d - d_n - a
+        # the vector from the analyzer center to in-plane detector position is the scattered wave-vector direction
+        f = sd - d_dot_n * n - sac
 
-        mod_a = sqrt(dot(a, a))
-        mod_d_n = sqrt(dot(d_n, d_n))
+        mod_a = sqrt(dot(sac, sac))
         mod_f = sqrt(dot(f, f))
 
-        mod_a_n = (mod_a / (mod_a + mod_f)) * mod_d_n
+        mod_a_n = (mod_a / (mod_a + mod_f)) * d_dot_n
         a_n = mod_a_n * n
 
-        # sample to analyzer vector
-        sa = a + a_n
-        # analyzer to detector vector
-        sd = d - self.sample_at - sa
-        # have an angle between them which is 2*theta
-        two_theta = acos(dot(sa, sd) / sqrt(dot(sa, sa)) / sqrt(dot(sd, sd)))
+        # sample to analyzer interaction-point vector
+        sa = sac + a_n
+        # analyzer interaction-point to detection-point vector
+        ad = sd - sa
+        return {'sample_analyzer': sa, 'analyzer_detector': ad, 'sample_analyzer_centre': sac,
+                'analyzer_detector_centre': f,
+                'length_sample_analyzer_centre': mod_a, 'length_analyzer_detector_centre': mod_f,
+                'signed_length_detector_position': d_dot_n}
 
+    def _broadcast_continuous_common(self, detector_index: Variable, ratio: Variable):
+        from scipp import concat, scalar, dot, sqrt, acos
+        dim = detector_index.dims[0]
+
+        detectors = [self.detectors[i] for i in detector_index.values]
+
+        at = concat([d.at for d in detectors], dim=dim)
+        to = concat([d.to for d in detectors], dim=dim)
+
+        sd = (scalar(1) - ratio) * at + ratio * to - self.sample_at
+
+        analyzers = [self.analyzer_per_detector[i] for i in detector_index.values]
+        sac = concat([self._analyzer_center(analyzer) for analyzer in analyzers], dim=dim)
+        n = concat([self.scattering_plane_normal(analyzer) for analyzer in analyzers], dim=dim)
+
+        # sample-to-detection-point vector component which is *out of the nominal scattering plane*
+        d_dot_n = dot(sd, n)
+
+        # the vector from the analyzer center to in-plane detector position is the scattered wave-vector direction
+        f = sd - d_dot_n * n - sac
+
+        mod_a = sqrt(dot(sac, sac))
+        mod_f = sqrt(dot(f, f))
+
+        mod_a_n = (mod_a / (mod_a + mod_f)) * d_dot_n
+        a_n = mod_a_n * n
+
+        # sample to analyzer interaction-point vector
+        sa = sac + a_n
+        # analyzer interaction-point to detection-point vector
+        ad = sd - sa
+        return {'sample_analyzer': sa, 'analyzer_detector': ad, 'sample_analyzer_centre': sac,
+                'analyzer_detector_centre': f,
+                'length_sample_analyzer_centre': mod_a, 'length_analyzer_detector_centre': mod_f,
+                'signed_length_detector_position': d_dot_n}
+
+    def broadcast_continuous_theta(self, detector_index: Variable, ratio: Variable):
+        from scipp import scalar, dot, sqrt, acos
+        # have an angle between them which is 2*theta
+        values = self._broadcast_continuous_common(detector_index, ratio)
+        # sample to analyzer interaction-point vector
+        sa = values['sample_analyzer']
+        # analyzer interaction-point to detection-point vector
+        ad = values['analyzer_detector']
+        two_theta = acos(dot(sa, ad) / sqrt(dot(sa, sa)) / sqrt(dot(ad, ad)))
         return two_theta / scalar(2)
 
+    def broadcast_continuous_delta_a4(self, detector_index: Variable, ratio: Variable):
+        from scipp import dot, sqrt, acos, cross, vector
+        values = self._broadcast_continuous_common(detector_index, ratio)
+        sac, sa = values['sample_analyzer_centre'], values['sample_analyzer']
+        c_hat = sac / sqrt(dot(sac, sac))
+        a_hat = sa / sqrt(dot(sa, sa))
+        z = vector([0, 0, 1.])
+        delta_a4 = acos(dot(c_hat, a_hat))
+        cca = cross(c_hat, a_hat)
+        sign = dot(cca / sqrt(dot(cca, cca)), vector([0, 0, 1]))
+        return delta_a4 * sign
+
     def broadcast_continuous_final_distance(self, detector_index: Variable, ratio: Variable):
+        from scipp import sqrt
+        values = self._broadcast_continuous_common(detector_index, ratio)
+        a = values['length_sample_analyzer_centre']
+        f = values['length_analyzer_detector_centre']
+        d = values['signed_length_detector_position']
+        return sqrt((a + f) * (a + f) + d * d)
+
+    def broadcast_continuous_analyzer_distance(self, detector_index: Variable):
+        values = self._broadcast_continuous_per_tube(detector_index)
+        return values['length_sample_analyzer_centre']
+
+    def broadcast_continuous_detector_distance(self, detector_index: Variable):
+        values = self._broadcast_continuous_per_tube(detector_index)
+        return values['length_analyzer_detector_centre']
+
+    def broadcast_continuous_a6(self, detector_index: Variable):
+        from scipp import sqrt, dot, acos
+        values = self._broadcast_continuous_per_tube(detector_index)
+        sa = values['sample_analyzer_centre']
+        ad = values['analyzer_detector_centre']
+        return acos(dot(sa, ad) / sqrt(dot(sa, sa)) / sqrt(dot(ad, ad)))
+
+    def broadcast_continuous_plane_spacing(self, detector_index: Variable):
         from scipp import concat, scalar, dot, sqrt, acos
         dim = detector_index.dims[0]
-
-        detectors = [self.detectors[i] for i in detector_index.values]
-
-        at = concat([d.at for d in detectors], dim=dim)
-        to = concat([d.to for d in detectors], dim=dim)
-
-        d = (scalar(1) - ratio) * at + ratio * to
-
         analyzers = [self.analyzer_per_detector[i] for i in detector_index.values]
-        a = concat([self._analyzer_center(analyzer) for analyzer in analyzers], dim=dim)
-        n = concat([self.scattering_plane_normal(analyzer) for analyzer in analyzers], dim=dim)
-
-        d_dot_n = dot(d, n)
-        d_n = d_dot_n * n
-
-        # the vector from the analyzer center to in-plane detector position is the scattered wavevector direction
-        f = d - d_n - a
-
-        mod_a = sqrt(dot(a, a))
-        mod_d_n = sqrt(dot(d_n, d_n))
-        mod_f = sqrt(dot(f, f))
-
-        mod_a_n = (mod_a / (mod_a + mod_f)) * mod_d_n
-        a_n = mod_a_n * n
-
-        return sqrt((mod_a + mod_f) * (mod_a + mod_f) + mod_d_n * mod_d_n)
+        d = concat([self.analyzers[analyzer].plane_spacing for analyzer in analyzers], dim=dim)
+        return d

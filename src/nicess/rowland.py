@@ -1,5 +1,14 @@
 from scipp import Variable
 
+def lengths_angle_circle(l0, l1, two_theta):
+    from numpy import sqrt, cos, sin
+    twice_sin_two_theta = 2 * sin(two_theta)
+    radius = sqrt(l0**2 + l1**2 + l0 * l1 * cos(two_theta)) / twice_sin_two_theta
+    z0 = l0 / 2
+    x0 = (l0 * cos(2 * two_theta) - l1 * cos(two_theta)) / twice_sin_two_theta
+    return x0, z0, radius
+
+
 def three_point_circle(p0: Variable, p1: Variable, p2: Variable):
     from scipp import sqrt, dot, cross, scalar, isclose
     # vectors along each side of the triangle
