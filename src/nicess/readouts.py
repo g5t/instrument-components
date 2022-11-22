@@ -1,3 +1,7 @@
+from scipp import Variable, DataArray
+from .bifrost import Tank
+
+
 def high_low_to_time(hdf_data, freq=None, unit=None):
     from scipp import scalar, array
     if freq is None:
@@ -45,11 +49,11 @@ def high_low_to_fake_tof(hdf_data, freq=None, unit=None):
 
 
 def cassette_pair_from_ring_tube(hdf_data):
-    tube = hdf_data['TubeId']
-    ring = hdf_data['RingId']
+    triplet = hdf_data['TubeId']  # *triplet* index: [0, 15]
+    ring = hdf_data['RingId']  # *three-cassette group* index: [0,1, 2,3, 4,5]
     # fen = hdf_data['FENId'] # Not used by BIFROST
-    pair = (tube / 3).astype('int')
-    cassette = 3 * (ring / 2).astype('int') + tube % 3
+    pair = (triplet / 3).astype('int')  # in-cassette (analyzer-triplet) index
+    cassette = 3 * (ring / 2).astype('int') + triplet % 3
     return cassette.astype('int32'), pair.astype('int32')
 
 
@@ -99,3 +103,109 @@ def load_bifrost_readout_times(filename):
     with File(filename) as file:
         clocks = high_low_to_fake_tof(file['bifrost_readouts'])
     return clocks
+
+
+def sub2x(ratio, edges):
+    """
+    For ratio = (A-B)/(A+B) values and pairs of ratio-edges defining the limits for multiple tubes,
+    extract the ranges and rescale to be in the range [0, 1]
+    """
+    return (ratio - edges['edges', 0]) / (edges['edges', 1] - edges['edges', 0])
+
+
+def event_position(x0, x1, x):
+    """
+    Convert from a unitless proportional value [0, 1] to the linear position between two endpoints
+    :param x0: the x=0 position for events
+    :param x1: the x=1 position for events
+    :param x: one or more relative-position values where events occurred
+    :return: the same positions expressed in the coordinate system of the endpoints
+    """
+    return x * (x1 - x0) + x0
+
+
+def transformation_graph(secondary):
+    from scipp import scalar, sin, cos
+    def l1():
+        return scalar(160, unit='m')
+
+    def secondary_index(cassette, pair, tube):
+        # index = 15 * cassette + 3 * pair + tube
+        index = 15 + (2 - tube)
+        return index
+
+    def l2(secondary_index):
+        return secondary.broadcast_continuous_analyzer_distance(secondary_index)
+
+    def l3(secondary_index):
+        return secondary.broadcast_continuous_detector_distance(secondary_index)
+
+    def delta_a4(secondary_index, x):
+        return secondary.broadcast_continuous_delta_a4(secondary_index, x).to(unit='degree')
+
+    def a6(secondary_index):
+        return secondary.broadcast_continuous_a6(secondary_index).to(unit='degree')
+
+    def d(secondary_index):
+        return secondary.broadcast_continuous_plane_spacing(secondary_index)
+
+    def criteria(d_spacing, a6, delta_a4, l1, l2, l3):
+        from scipp.constants import Planck as h, neutron_mass as m
+        return ((2 * d_spacing * m / h) * sin(a6/2) * (l1 * cos(delta_a4) + l2 + l3)).to(unit='ms')
+
+    def one(time_of_flight, criteria):
+        return time_of_flight / criteria
+
+    graph = dict(secondary_index=secondary_index, l1=l1, l2=l2, l3=l3, criteria=criteria, a6=a6, delta_a4=delta_a4,
+                 d_spacing=d, one=one)
+
+    return graph
+
+
+def transform_to_criteria(data: DataArray, tank: Tank, shortcut=False):
+    from scipp import array, group, collapse, concat
+    from numpy import vstack
+    # can this be done for multiple triplets at once?
+    triplet = tank.channels[1].pairs[0].detector
+    boundaries = triplet.a_minus_b_over_a_plus_b_edges().rename_dims({'tube': 'ratio'})
+    tube_index = array(values=[-1, 0, -2, 1, -3, 2, -4], dims=['ratio'])
+
+    binned = data.bin(ratio=boundaries)
+    binned.coords['tube'] = tube_index
+
+    edges = vstack((boundaries.values[:-1], boundaries.values[1:]))
+    edges[:, 3] = edges[1, 3], edges[0, 3]
+    binned.coords['edges'] = array(values=edges, dims=['edges', 'ratio'])
+
+    # tubes = array(values=[-2, -3, 0, 1, 2], dims=['tube'])
+    # tube_ratios = {f"tube {x:c}": group(binned, 'tube')['tube', x].copy() for x in tubes}
+    # tube_plot = {x: t.bin(ratio=1000) for x, t in tube_ratios.items() if t.sum().value}
+    # out = plot(tube_plot)
+    # for (l, h), t in zip(binned.coords['edges'].values.T, tube_plot.values()):
+    #     l, h = min([l, h]), max([l, h])
+    #     out.ax.plot([l, l, h, h], t.max().value * [1, 0, 0, 1], '--k')
+    #
+
+    # # Remove any 'tube' bins which have no events:
+    # pruned = concat([v for v in collapse(binned, 'tube').values() if v.values.sizes['event']], dim='tube')
+
+    # convert the (A-B)/(A+B) subranges to [0, 1] unitless values along each tube:
+    # this requires removing the coordinate named 'ratio' from the binned data
+    del binned.coords['ratio']
+    # bin in binned are [not tube, tube-0, not tube, tube-1, not tube, tube-2, not tube]
+    # from which we only want to keep the tubes, hence the ['ratio', 1::2]
+    ofx = binned['ratio', 1::2].transform_coords(['x'], graph={'x': sub2x})
+
+    if shortcut:
+        return ofx
+
+    # # Re-arrange the data into tube groups, and append the tube endpoints
+    # oft = ofx.group('tube')
+    # oft.coords['x0'] = concat([t.at for t in triplet.tubes], dim='tube')
+
+    # ofp = oft.transform_coords(['position'], graph={'position': event_position})
+    # ofp.bin(tube=1).data.values[0].plot(projection='3d', positions='position')
+
+    ofc = ofx.transform_coords(['time_of_flight', 'criteria', 'one', 'l1', 'l2', 'l3'], graph=transformation_graph(tank.to_secondary()))
+
+    return ofc

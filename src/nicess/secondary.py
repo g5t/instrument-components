@@ -20,6 +20,16 @@ class DirectSecondary:
     detectors: List[DiscreteTube]
     sample_at: Variable = field(default_factory=lambda: vector([0., 0., 0.], unit='m'))
 
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text('DirectSecondary(...)')
+        else:
+            with p.group(4, 'DirectSecondary(', ')'):
+                p.text(f'{len(self.detectors)} detectors')
+                p.breakable()
+                p.text(f'sample at {self.sample_at.value} {self.sample_at.unit}')
+
+
     def __eq__(self, other):
         return all(sd == od for sd, od in zip(self.detectors, other.detectors)) and self.sample_at == other.sample_at
 
@@ -88,6 +98,17 @@ class IndirectSecondary:
     sample_at: Variable = field(default_factory=lambda: vector([0., 0., 0.], unit='m'))
     analyzer_map: Variable = field(default_factory=lambda: zeros(shape=[0, 0], dims=['channel', 'pair']))
     detector_map: Variable = field(default_factory=lambda: zeros(shape=[0, 0, 0], dims=['channel', 'pair', 'tube']))
+
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text('IndirectSecondary(...)')
+        else:
+            with p.group(4, 'IndirectSecondary(', ')'):
+                p.text(f'{len(self.detectors)} detectors')
+                p.breakable()
+                p.text(f'{len(self.analyzers)} analyzers')
+                p.breakable()
+                p.text(f'sample at {self.sample_at.value} {self.sample_at.unit}')
 
     def __eq__(self, other):
         if not isinstance(other, IndirectSecondary):
@@ -249,9 +270,12 @@ class IndirectSecondary:
         return IndirectSecondary(detectors, analyzers, analyzer_per_detector, sample_at)
 
     def _broadcast_continuous_per_tube(self, detector_index: Variable):
-        from scipp import concat, scalar, dot, sqrt, acos
+        from scipp import concat, dot, sqrt
         dim = detector_index.dims[0]
 
+        # print(detector_index)
+        # detectors = detector_index.transform_coords('d', graph={'d': lambda x: self.detectors[x]})
+        # print(detectors)
         detectors = [self.detectors[i] for i in detector_index.values]
 
         at = concat([d.at for d in detectors], dim=dim)
@@ -317,7 +341,7 @@ class IndirectSecondary:
         # analyzer interaction-point to detection-point vector
         ad = sd - sa
         return {'sample_analyzer': sa, 'analyzer_detector': ad, 'sample_analyzer_centre': sac,
-                'analyzer_detector_centre': f,
+                'analyzer_detector_centre': f, 'scattering_plane_normal': n,
                 'length_sample_analyzer_centre': mod_a, 'length_analyzer_detector_centre': mod_f,
                 'signed_length_detector_position': d_dot_n}
 
@@ -333,16 +357,20 @@ class IndirectSecondary:
         return two_theta / scalar(2)
 
     def broadcast_continuous_delta_a4(self, detector_index: Variable, ratio: Variable):
-        from scipp import dot, sqrt, acos, cross, vector
+        from scipp import dot, sqrt, atan2
         values = self._broadcast_continuous_common(detector_index, ratio)
         sac, sa = values['sample_analyzer_centre'], values['sample_analyzer']
+        n = values['scattering_plane_normal']
+
         c_hat = sac / sqrt(dot(sac, sac))
         a_hat = sa / sqrt(dot(sa, sa))
-        z = vector([0, 0, 1.])
-        delta_a4 = acos(dot(c_hat, a_hat))
-        cca = cross(c_hat, a_hat)
-        sign = dot(cca / sqrt(dot(cca, cca)), vector([0, 0, 1]))
-        return delta_a4 * sign
+
+        ca = dot(c_hat, a_hat)
+        na = dot(n, a_hat)
+        delta_a4 = atan2(y=na, x=ca)
+
+        return delta_a4
+
 
     def broadcast_continuous_final_distance(self, detector_index: Variable, ratio: Variable):
         from scipp import sqrt

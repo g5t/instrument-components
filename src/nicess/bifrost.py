@@ -641,7 +641,7 @@ class Tank:
 
         if add_sphere_at_origin:
             from cadquery import Workplane
-            w = Workplane().sphere(radius=0.5)
+            w = Workplane().sphere(radius=10)
             assembly.add(w, name='origin')
 
         assembly.name = 'BIFROST-secondary'

@@ -12,3 +12,7 @@ dependencies:
   - jupyterlab
   - ipympl
   - matplotlib
+  - gitpython
+  - setuptools_scm
+  - pip:
+      - schemdraw

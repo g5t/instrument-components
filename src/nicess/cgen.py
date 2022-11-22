@@ -99,8 +99,15 @@ def arrays_to_file(arrays: dict[str, ndarray], filename: Union[str, Path], overw
 
 
 def arrays_to_instr_file(arrays: dict[str, ndarray], filename: Union[str, Path], overwrite=False):
+    from setuptools_scm import get_version
+    from datetime import datetime
+    from pathlib import Path
+    from git import Repo
+    repo = Repo(Path(__file__).parent.parent.parent)
+
+    comment = f"// {repo.remote().url}\n// {get_version()}\n// {datetime.now().isoformat()}\n\n"
     preamble = "DEFINE INSTRUMENT BIFROST_params ()\nDECLARE\n%{\n"
     body = arrays_to_cstring(arrays)
     closing = "%}\nINITIALIZE\n%{\n%}\nTRACE\nFINALLY\n%{\n%}\nEND"
 
-    return write_to_file(preamble + body + closing, filename, overwrite=overwrite)
+    return write_to_file(comment + preamble + body + closing, filename, overwrite=overwrite)
