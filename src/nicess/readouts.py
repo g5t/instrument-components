@@ -156,8 +156,21 @@ def transformation_graph(secondary):
     def one(time_of_flight, criteria):
         return time_of_flight / criteria
 
+    def velocity(l1, l2, l3, time_of_flight, x):
+        from scipp import sqrt
+        dist = l1 + sqrt((l2 + l3)**2 + x**2)
+        vel = dist / time_of_flight
+
+    def wavelength(velocity):
+        from scipp.constants import Planck as h, neutron_mass as m
+        return h / (m * velocity)
+
+    def energy(velocity):
+        from scipp.constants import neutron_mass as m
+        return m * velocity * velocity / 2
+
     graph = dict(secondary_index=secondary_index, l1=l1, l2=l2, l3=l3, criteria=criteria, a6=a6, delta_a4=delta_a4,
-                 d_spacing=d, one=one)
+                 d_spacing=d, one=one, velocity=velocity, wavelength=wavelength, energy=energy)
 
     return graph
 

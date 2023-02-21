@@ -101,6 +101,12 @@ class Wire:
         axis = (self.to - self.at)/2
         return hstack((center.value, axis.value))
 
+    def center(self):
+        return (self.at + self.to) / 2
+
+    def end(self):
+        return (self.to - self.at) / 2
+
 
 @dataclass
 class DiscreteWire(Wire):
@@ -247,7 +253,11 @@ class DiscreteTube(DiscreteWire):
         v = t - a
         h = sqrt(dot(v, v)).to(unit=unit)
         r = self.radius.to(unit=unit).value
-        w = Workplane(origin=tuple(a.value)).cylinder(h.value, r, tuple((v/h).value))
+        # TODO Sort out when/why this changed. Previously specifying an end and vector *worked* but now doesn't
+        # As of now, the cylinder is centered by default and needs to be set to false if we don't want it centered
+        w = Workplane(origin=tuple(a.value)).cylinder(h.value, r, tuple((v/h).value), centered=False)
+        # c = (t + a) / 2
+        # w = Workplane(origin=tuple(c.value)).cylinder(h.value, r, tuple((v/h).value), centered=True)
         return w
 
 
