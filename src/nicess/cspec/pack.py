@@ -57,15 +57,19 @@ class Pack:
         return combine_assembly(**t)
 
     def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent, first_wire_index: int,
-                        name: str, extend: str, parameters: dict):
+                        group_name: str, name: str, extend: str, parameters: dict):
         from numpy import hstack
+        from scipp import vector
+        from scipp.spatial import rotations_from_rotvecs as rfr
         from ..mcstasscript import declare_array
+
+        lab_to_mcstas = rfr(vector([0, 0, -90], unit='degree')) * rfr(vector([0, -90, 0], unit='degree'))
 
         # Collect parameter vectors and write into McStas declare section
         declare_array(inst, 'double', f'{name}_positions', 'tube centers of mass',
-                      hstack([t.center().to(unit='m').value for t in self.tubes]))
+                      hstack([(lab_to_mcstas * t.center()).to(unit='m').value for t in self.tubes]))
         declare_array(inst, 'double', f'{name}_ends', 'tube center of mass to end vectors',
-                      hstack([t.end().to(unit='m').value for t in self.tubes]))
+                      hstack([(lab_to_mcstas * t.end()).to(unit='m').value for t in self.tubes]))
         declare_array(inst, 'double', f'{name}_radii', 'tube radii',
                       hstack([t.radius.to(unit='m').value for t in self.tubes]))
         declare_array(inst, 'double', f'{name}_rhos', 'per-tube wire resistivity',
@@ -76,7 +80,7 @@ class Pack:
                       self.resistances['end', 1].to(unit='Ohm').values)
 
         # Add the detector component to the instrument
-        pack = inst.component("Detector_tubes", name=name, RELATIVE=relative, EXTEND=extend)
+        pack = inst.component("Detector_tubes", name=name, RELATIVE=relative, EXTEND=extend, GROUP=group_name)
         pack.set_parameters(N=len(self.tubes), first_wire=first_wire_index, pack_filename=f'"{name}_pack.dat"')
         pack.set_parameters({k: f'{name}_{k}' for k in ('positions', 'ends', 'radii', 'rhos', 'preRs', 'postRs')})
         pack.set_parameters(parameters)

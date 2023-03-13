@@ -25,15 +25,15 @@ def known_pack_params():
     from scipp import array, scalar, vector, vectors
     from numpy import arange
     known = dict()
-    known['sample_detector_distance'] = scalar(3., unit='m')
+    known['sample_detector_distance'] = scalar(3.5, unit='m')
     known['detector_length'] = scalar(3.5, unit='m')
-    known['detector_radius'] = scalar(25.4, unit='mm')
+    known['detector_radius'] = scalar(25.4/2, unit='mm')
     known['detector_orient'] = vector([0, 0, 0], unit='mm')
     known['sample'] = vector([0, 0, 0], unit='m')
     known['resistance'] = scalar(380, unit='Ohm')
     known['resistivity'] = scalar(140, unit='Ohm/in').to(unit='Ohm/m')
-    # each pack is 24 degree wide, with 7 packs to cover 180 degrees
-    known['tube_angles'] = array(values=arange(24)-11.5, unit='degree', dims=['tube'])
-    # 3 degree minimum scattering angle, centers 25 degrees apart such that the highest angle is 180-3
-    known['pack_angles'] = array(values=3 + 12 + 25 * arange(7), unit='degree', dims=['pack'])
+    # each pack is 32 tubes with 0.43 degrees between tubes
+    known['tube_angles'] = array(values=0.43*(arange(32)-16+0.5), unit='degree', dims=['tube'])
+    # 5 degree minimum scattering angle, centers 33*0.43 degrees apart such that the highest angle is 180-3
+    known['pack_angles'] = array(values=5 + 16*0.43 + (33 * 0.43) * arange(7), unit='degree', dims=['pack'])
     return known

@@ -138,7 +138,7 @@ class Arm:
                       source=f'"{source}"', sink=f'"{sink}"')
         return params
 
-    def mcstas_detector_parameters(self, sample: Variable) -> dict:
+    def mcstas_detector_parameters(self, sample: Variable, filename: str) -> dict:
         #TODO make this more accurate -- insert vectors into the instrument defined parameters to use here?
         from scipp import sqrt, dot
         lv = [self.detector.tubes[x].to - self.detector.tubes[x].at for x in range(3)]
@@ -148,7 +148,9 @@ class Arm:
         width = sqrt(dot(cv[2] - cv[0], cv[2] - cv[0])).to(unit='m').value + 2 * radius
         # print(f"detectors have width f{width} m")
         params = dict(charge_a='"event_charge_left"', charge_b='"event_charge_right"', detection_time='"event_time"',
-                      tube_index_name='"TUBE"', N=3, width=width, height=length, radius=radius)
+                      tube_index_name='"TUBE"', N=3, width=width, height=length, radius=radius,
+                      wires_in_series=1, wire_filename=f'"wire_{filename}"', pack_filename=f'"pack_{filename}"'
+                      )
         return params
 
     def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent, name: str = None,
@@ -210,4 +212,4 @@ class Arm:
         det = inst.component("Detector_tubes", name=f"{name}_triplet", RELATIVE="PREVIOUS",
                              AT=[0, 0, analyzer_detector_distance.value],
                              WHEN=detector_when, EXTEND=detector_extend)
-        det.set_parameters(**self.mcstas_detector_parameters(origin))
+        det.set_parameters(**self.mcstas_detector_parameters(origin, f'{name}.dat'))

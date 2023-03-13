@@ -78,7 +78,8 @@ class Tank:
         from ..mcstasscript import ensure_user_var
         ensure_user_var(inst, 'int', 'flag', 'Flag indicates detection in a monitor')
 
+        group_name = f"{name}_packs"
         for pack_index, pack in enumerate(self.packs):
-            pack_name = f"{name}_{1 + pack_index}"
+            pack_name = f"{name}_{1 + pack_index:02d}"
             extend = "flag = (SCATTERED) ? 1 : 0;"
-            pack.to_mcstasscript(inst, relative, pack_index * 24, pack_name, extend, parameters)
+            pack.to_mcstasscript(inst, relative, pack_index * 24, group_name, pack_name, extend, parameters)
