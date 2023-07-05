@@ -134,7 +134,7 @@ class Tank:
 
     def to_mcstasscript(self, instrument: ScriptInstrument, sample: ScriptComponent, settings: dict = None):
         from scipp import vector, concat, max
-        from ..mcstasscript import ensure_user_var
+        from ..mcstasscript import ensure_user_var, declare_array
         ensure_user_var(instrument, 'int', 'secondary_cassette', 'Secondary spectrometer analyzer cassette index')
 
         origin = vector([0, 0, 0], unit='m')
@@ -142,8 +142,9 @@ class Tank:
         cov_xy = [c.coverage(origin) for c in self.channels]
         cov_x = 2 * max(concat([y for _, y in cov_xy], dim='channel')).value
 
-        slits = instrument.component('Slit_radial_multi', RELATIVE=sample)
-        declared_positions = instrument.declare('double', name=f'{slits.name}_positions', array=len(positions), value=positions)
+        slits = instrument.add_component('slits', 'Slit_radial_multi', RELATIVE=sample)
+        declared_positions = declare_array(instrument, 'double', f'{slits.name}_positions',
+                                           f'{slits.name} position values', positions)
         # slits.set_parameters(slit_width='atan2(slitX, slitDistance)', offset='slitAngle*DEG2RAD',
         #                      number=len(self.channels), radius='slitDistance', height=0.2,
         #                      positions=declared_positions.name

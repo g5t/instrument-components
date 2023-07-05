@@ -162,7 +162,7 @@ class Channel:
         # For each channel we need to define the local coordinate system, relative to the provided sample
         origin = vector([0, 0, 0], unit='m')
         ra0 = self.sample_space_angle(origin).to(unit='degree').value
-        cassette = inst.component("Arm", name=f"{name}_arm", RELATIVE=relative, ROTATED=[0, ra0, 0], WHEN=when)
+        cassette = inst.add_component(f"{name}_arm", "Arm", RELATIVE=relative, ROTATED=[0, ra0, 0], WHEN=when)
 
         ensure_user_var(inst, 'int', 'secondary_scattered', 'Flag indicates if Bragg scattering has occurred')
         ensure_user_var(inst, 'int', 'analyzer', 'Flag indicates were Bragg scattering has occurred')

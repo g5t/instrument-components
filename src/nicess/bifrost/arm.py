@@ -149,7 +149,8 @@ class Arm:
         # print(f"detectors have width f{width} m")
         params = dict(charge_a='"event_charge_left"', charge_b='"event_charge_right"', detection_time='"event_time"',
                       tube_index_name='"TUBE"', N=3, width=width, height=length, radius=radius,
-                      wires_in_series=1, wire_filename=f'"wire_{filename}"', pack_filename=f'"pack_{filename}"'
+                      wires_in_series=1,
+                      # wire_filename=f'"wire_{filename}"', pack_filename=f'"pack_{filename}"'
                       )
         return params
 
@@ -179,37 +180,33 @@ class Arm:
 
         detector_position_name = f"{name}_detector_point"
         # Move to the center of the analyzer & reorient for monochromator scattering in vertical plane
-        # inst.component("Arm", name=f"{name}_analyzer_point", RELATIVE=relative,
-        #                AT=[0, 0, sample_analyzer_distance.value])
-        # inst.component("Arm", name=f"{name}_analyzer_coordinate_change", RELATIVE="PREVIOUS", ROTATED=[0, 0, 90])
+        # inst.add_component(f"{name}_analyzer_point", "Arm", RELATIVE=relative,
+        #                    AT=[0, 0, sample_analyzer_distance.value])
+        # inst.add_component(f"{name}_analyzer_coordinate_change", "Arm", RELATIVE="PREVIOUS", ROTATED=[0, 0, 90])
         # # Add the Rowland monochromator
-        # mono = inst.component("Monochromator_Rowland", name=f"{name}_monochromator",
-        #                       RELATIVE="PREVIOUS", ROTATED=[0, theta, 0],
-        #                       WHEN=analyzer_when, EXTEND=analyzer_extend)
+        # mono = inst.add_component(f"{name}_monochromator", "Monochromator_Rowland",
+        #                           RELATIVE="PREVIOUS", ROTATED=[0, theta, 0],
+        #                           WHEN=analyzer_when, EXTEND=analyzer_extend)
         # mono.set_parameters(**self.mcstas_analyzer_parameters(origin, relative.name, detector_position_name))
         # # Add the detector tubes
-        # inst.component("Arm", name=f"{name}_detector_angle", RELATIVE="PREVIOUS",
-        #                ROTATED=[0, theta, 0], ROTATED_RELATIVE=mono, WHEN=detector_when)
-        # inst.component("Arm", name=detector_position_name, WHEN=detector_when,
-        #                RELATIVE="PREVIOUS", AT=[0, 0, analyzer_detector_distance.value])
-        # det = inst.component("Detector_tubes", name=f"{name}_triplet", RELATIVE="PREVIOUS",
-        #                      WHEN=detector_when, EXTEND=detector_extend)
+        # inst.add_component(f"{name}_detector_angle", "Arm", RELATIVE="PREVIOUS",
+        #                    ROTATED=[0, theta, 0], ROTATED_RELATIVE=mono, WHEN=detector_when)
+        # inst.add_component(detector_position_name, "Arm", WHEN=detector_when,
+        #                    RELATIVE="PREVIOUS", AT=[0, 0, analyzer_detector_distance.value])
+        # det = inst.add_component(f"{name}_triplet", "Detector_tubes", RELATIVE="PREVIOUS",
+        #                          WHEN=detector_when, EXTEND=detector_extend)
         # det.set_parameters(**self.mcstas_detector_parameters(origin))
 
         # Move to the center of the analyzer & reorient for monochromator scattering in vertical plane
-        inst.component("Arm", name=f"{name}_analyzer_point", RELATIVE=relative, ROTATED_RELATIVE=relative,
-                       AT=[0, 0, sample_analyzer_distance.value], ROTATED=[0, 0, 90])
-        mono = inst.component("Monochromator_Rowland", name=f"{name}_monochromator",
+        inst.add_component(f"{name}_analyzer_point", "Arm", RELATIVE=relative,
+                           AT=[0, 0, sample_analyzer_distance.value], ROTATED=[0, 0, 90])
+        mono = inst.add_component(f"{name}_monochromator", "Monochromator_Rowland",
                               RELATIVE="PREVIOUS", ROTATED=[0, theta, 0], ROTATED_RELATIVE="PREVIOUS",
                               WHEN=analyzer_when, EXTEND=analyzer_extend)
         mono.set_parameters(**self.mcstas_analyzer_parameters(origin, relative.name, f"{name}_triplet"))
         # Add an energy monitor just behind the analyzer?
         # Add the detector tubes
-        inst.component("Arm", name=f"{name}_detector_angle", RELATIVE="PREVIOUS",
-                       ROTATED=[0, theta, 0], ROTATED_RELATIVE=mono, WHEN=detector_when)
-        # inst.component("Arm", name=detector_position_name, WHEN=detector_when,
-        #                RELATIVE="PREVIOUS", AT=[0, 0, analyzer_detector_distance.value])
-        det = inst.component("Detector_tubes", name=f"{name}_triplet", RELATIVE="PREVIOUS",
-                             AT=[0, 0, analyzer_detector_distance.value],
-                             WHEN=detector_when, EXTEND=detector_extend)
+        inst.add_component(f"{name}_detector_angle", "Arm", RELATIVE=mono, ROTATED=[0, theta, 0], WHEN=detector_when)
+        det = inst.add_component(f"{name}_triplet", "Detector_tubes", RELATIVE="PREVIOUS", WHEN=detector_when,
+                                 EXTEND=detector_extend, AT=[0, 0, analyzer_detector_distance.value])
         det.set_parameters(**self.mcstas_detector_parameters(origin, f'{name}.dat'))
