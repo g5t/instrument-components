@@ -31,10 +31,15 @@ def vector_to_vector_quaternion(fr: Variable, to: Variable):
     values = concatenate((vector_part.values, expand_dims(scalar_part.values, axis=-1)), axis=-1)
     dims = vector_part.dims
 
-    # we need to bypass the standard error checking in the scipp python module due to a bug:
-    # from scipp.spatial import rotations
-    from scipp._scipp import core as scipp_core
-    q = scipp_core.rotations(values=values, dims=dims)
+    try:
+        from scipp.spatial import rotations
+        q = rotations(values=values, dims=dims)
+    except:
+        # This *should* only effect scipp < v0.16.2 (August 2022)
+        # we need to bypass the standard error checking in the scipp python module due to a bug:
+        # from scipp.spatial import rotations
+        from scipp._scipp import core as scipp_core
+        q = scipp_core.rotations(values=values, dims=dims)
     return q
 
 
