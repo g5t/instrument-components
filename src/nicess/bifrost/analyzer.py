@@ -100,3 +100,21 @@ class Analyzer:
         # exploit that for x in zip returns first all the first elements, then all the second elements, etc.
         x, y, a = [concat(x, dim='blades') for x in zip(*[b.rtp_parameters(sample, p0, oop) for b in self.blades])]
         return x, y, a
+
+    def mcstas_parameters(self, sample: Variable, source: str, sink: str) -> dict:
+        from ..spatial import is_scipp_vector
+        is_scipp_vector(sample, 'sample')
+
+        perp_q, perp_plane, parallel_q = self.central_blade.shape.to(unit='m').value
+        hor_cov, ver_cov = self.coverage(sample)
+        params = dict(NH=self.count, zwidth=perp_q, yheight=perp_plane, mosaic='mosaic', DM=3.355,
+                      gap=0.002, show_construction='showconstruction', angle_h=ver_cov.to(unit='degree').value,
+                      source=f'"{source}"', sink=f'"{sink}"')
+        return params
+
+
+    def to_mcstasscript(self, inst: ScriptInstrument, source: str, relative: str, sink: str, theta: float,
+                        name: str = None, when: str = None, extend: str = None, origin: Variable = None):
+        mono = inst.add_component(name, 'Monochromator_Rowland', RELATIVE=relative,
+                                  ROTATED=[0, theta, 0], ROTATED_RELATIVE=relative, WHEN=when, EXTEND=extend)
+        mono.set_parameters(**self.mcstas_parameters(origin, source, sink))

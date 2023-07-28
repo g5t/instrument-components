@@ -107,3 +107,38 @@ class Triplet:
         """Points to convert continuous (A-B)/(A+B) to discrete segments per tube"""
         from scipp import scalar
         return 2 * self.a_over_a_plus_b_edges() - scalar(1)
+
+    def mcstas_parameters(self) -> dict:
+        #TODO make this more accurate -- insert vectors into the instrument defined parameters to use here?
+        from scipp import sqrt, dot
+        # length vector (from one end of each tube to the other)
+        lv = [self.tubes[x].to - self.tubes[x].at for x in range(3)]
+        # central vector (the position of the center, relative to defining sample position)
+        cv = [(self.tubes[x].to + self.tubes[x].at)/2 for x in range(3)]
+        # average length -- they *should* all be identical, but maybe they're not (hence the note above)?
+        length = sum([sqrt(dot(x, x)).to(unit='m').value for x in lv]) / 3
+        # average radius -- ditto, if they're not identical this is wrong and a vector in the instrument is better
+        radius = sum([self.tubes[x].radius.to(unit='m').value for x in range(3)]) / 3
+        # The distance between the first and third tube centres plus twice the radius is the assembly width
+        width = sqrt(dot(cv[2] - cv[0], cv[2] - cv[0])).to(unit='m').value + 2 * radius
+        # print(f"detectors have width f{width} m")
+        params = dict(charge_a='"event_charge_left"', charge_b='"event_charge_right"', detection_time='"event_time"',
+                      tube_index_name='"TUBE"', N=3, width=width, height=length, radius=radius,
+                      wires_in_series=1,
+                      # wire_filename=f'"wire_{filename}"', pack_filename=f'"pack_{filename}"'
+                      )
+        return params
+
+    def to_mcstasscript(self, inst: ScriptInstrument, relative: str, distance: float, name: str = None,
+                        when: str = None, extend: str = None, add_metadata: bool = False):
+        inst.add_component(name, 'Detector_tubes', RELATIVE=relative, WHEN=when, EXTEND=extend, AT=[0, 0, distance])\
+            .set_parameters(**self.mcstas_parameters())
+        # # this is handled by eniius via a custom Detector_triplet translation method.
+        # if add_metadata:
+        #     import json
+        #     # setup the dictionary that specifies the event stream information ... or the whole NXdetector?
+        #     # TODO ensure name matches the Event Formation Unit producer name
+        #     stream = {'module': 'ev44', 'config': {'source': name, 'topic': 'SimulatedEvents'}}
+        #     # TODO verify how eniius uses data to override entries?
+        #     eniius_data = {'type': 'dict', 'value': {'relative/position/in/nx': stream}}
+        #     det.extend_METADATA('eniius_data', 'JSON', json.dumps(eniius_data))

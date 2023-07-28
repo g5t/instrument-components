@@ -127,32 +127,32 @@ class Arm:
     def coverage(self, sample: Variable):
         return self.analyzer.coverage(sample)
 
-    def mcstas_analyzer_parameters(self, sample: Variable, source: str, sink: str) -> dict:
-        from ..spatial import is_scipp_vector
-        is_scipp_vector(sample, 'sample')
+    # def mcstas_analyzer_parameters(self, sample: Variable, source: str, sink: str) -> dict:
+    #     from ..spatial import is_scipp_vector
+    #     is_scipp_vector(sample, 'sample')
+    #
+    #     perp_q, perp_plane, parallel_q = self.analyzer.central_blade.shape.to(unit='m').value
+    #     hor_cov, ver_cov = self.analyzer.coverage(sample)
+    #     params = dict(NH=self.analyzer.count, zwidth=perp_q, yheight=perp_plane, mosaic='mosaic', DM=3.355,
+    #                   gap=0.002, show_construction='showconstruction', angle_h=ver_cov.to(unit='degree').value,
+    #                   source=f'"{source}"', sink=f'"{sink}"')
+    #     return params
 
-        perp_q, perp_plane, parallel_q = self.analyzer.central_blade.shape.to(unit='m').value
-        hor_cov, ver_cov = self.analyzer.coverage(sample)
-        params = dict(NH=self.analyzer.count, zwidth=perp_q, yheight=perp_plane, mosaic='mosaic', DM=3.355,
-                      gap=0.002, show_construction='showconstruction', angle_h=ver_cov.to(unit='degree').value,
-                      source=f'"{source}"', sink=f'"{sink}"')
-        return params
-
-    def mcstas_detector_parameters(self, sample: Variable, filename: str) -> dict:
-        #TODO make this more accurate -- insert vectors into the instrument defined parameters to use here?
-        from scipp import sqrt, dot
-        lv = [self.detector.tubes[x].to - self.detector.tubes[x].at for x in range(3)]
-        cv = [(self.detector.tubes[x].to + self.detector.tubes[x].at)/2 for x in range(3)]
-        length = sum([sqrt(dot(x, x)).to(unit='m').value for x in lv]) / 3
-        radius = sum([self.detector.tubes[x].radius.to(unit='m').value for x in range(3)]) / 3
-        width = sqrt(dot(cv[2] - cv[0], cv[2] - cv[0])).to(unit='m').value + 2 * radius
-        # print(f"detectors have width f{width} m")
-        params = dict(charge_a='"event_charge_left"', charge_b='"event_charge_right"', detection_time='"event_time"',
-                      tube_index_name='"TUBE"', N=3, width=width, height=length, radius=radius,
-                      wires_in_series=1,
-                      # wire_filename=f'"wire_{filename}"', pack_filename=f'"pack_{filename}"'
-                      )
-        return params
+    # def mcstas_detector_parameters(self, sample: Variable, filename: str) -> dict:
+    #     #TODO make this more accurate -- insert vectors into the instrument defined parameters to use here?
+    #     from scipp import sqrt, dot
+    #     lv = [self.detector.tubes[x].to - self.detector.tubes[x].at for x in range(3)]
+    #     cv = [(self.detector.tubes[x].to + self.detector.tubes[x].at)/2 for x in range(3)]
+    #     length = sum([sqrt(dot(x, x)).to(unit='m').value for x in lv]) / 3
+    #     radius = sum([self.detector.tubes[x].radius.to(unit='m').value for x in range(3)]) / 3
+    #     width = sqrt(dot(cv[2] - cv[0], cv[2] - cv[0])).to(unit='m').value + 2 * radius
+    #     # print(f"detectors have width f{width} m")
+    #     params = dict(charge_a='"event_charge_left"', charge_b='"event_charge_right"', detection_time='"event_time"',
+    #                   tube_index_name='"TUBE"', N=3, width=width, height=length, radius=radius,
+    #                   wires_in_series=1,
+    #                   # wire_filename=f'"wire_{filename}"', pack_filename=f'"pack_{filename}"'
+    #                   )
+    #     return params
 
     def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent, name: str = None,
                         analyzer_when: str = None, analyzer_extend: str = None,
@@ -161,11 +161,6 @@ class Arm:
         from scipp import concat, all, isclose, vector, dot, sqrt, atan2
         # For each channel we need to define the local coordinate system, relative to the provided sample
         origin = vector([0, 0, 0], unit='m')
-        # relative_angles = [arm.sample_space_angle(origin) for arm in self.pairs]
-        # ra0 = relative_angles[0]
-        # if not all(isclose(concat(relative_angles, dim='arm'), ra0)):
-        #     raise RuntimeError("different relative angles for same-channel analyzers?!")
-        # ra0 = ra0.to(unit='degree').value
 
         sa_vec = self.analyzer.central_blade.position
         ad_vec = (self.detector.tubes[1].at + self.detector.tubes[1].to) / 2 - sa_vec
@@ -178,35 +173,18 @@ class Arm:
         two_theta = atan2(y=y, x=x).to(unit='degree').value
         theta = two_theta / 2
 
-        detector_position_name = f"{name}_detector_point"
+        point = f'{name}_analyzer_point'    # component name of the location of the analyzer
+        mono = f'{name}_monochromator'      # component name of the analyzer itself
+        orient = f'{name}_detector_angle'   # component name of the oriented arm pointing at the detector
+        triplet = f'{name}_triplet'         # component name of the detector itself
         # Move to the center of the analyzer & reorient for monochromator scattering in vertical plane
-        # inst.add_component(f"{name}_analyzer_point", "Arm", RELATIVE=relative,
-        #                    AT=[0, 0, sample_analyzer_distance.value])
-        # inst.add_component(f"{name}_analyzer_coordinate_change", "Arm", RELATIVE="PREVIOUS", ROTATED=[0, 0, 90])
-        # # Add the Rowland monochromator
-        # mono = inst.add_component(f"{name}_monochromator", "Monochromator_Rowland",
-        #                           RELATIVE="PREVIOUS", ROTATED=[0, theta, 0],
-        #                           WHEN=analyzer_when, EXTEND=analyzer_extend)
-        # mono.set_parameters(**self.mcstas_analyzer_parameters(origin, relative.name, detector_position_name))
-        # # Add the detector tubes
-        # inst.add_component(f"{name}_detector_angle", "Arm", RELATIVE="PREVIOUS",
-        #                    ROTATED=[0, theta, 0], ROTATED_RELATIVE=mono, WHEN=detector_when)
-        # inst.add_component(detector_position_name, "Arm", WHEN=detector_when,
-        #                    RELATIVE="PREVIOUS", AT=[0, 0, analyzer_detector_distance.value])
-        # det = inst.add_component(f"{name}_triplet", "Detector_tubes", RELATIVE="PREVIOUS",
-        #                          WHEN=detector_when, EXTEND=detector_extend)
-        # det.set_parameters(**self.mcstas_detector_parameters(origin))
-
-        # Move to the center of the analyzer & reorient for monochromator scattering in vertical plane
-        inst.add_component(f"{name}_analyzer_point", "Arm", RELATIVE=relative,
-                           AT=[0, 0, sample_analyzer_distance.value], ROTATED=[0, 0, 90])
-        mono = inst.add_component(f"{name}_monochromator", "Monochromator_Rowland",
-                              RELATIVE="PREVIOUS", ROTATED=[0, theta, 0], ROTATED_RELATIVE="PREVIOUS",
-                              WHEN=analyzer_when, EXTEND=analyzer_extend)
-        mono.set_parameters(**self.mcstas_analyzer_parameters(origin, relative.name, f"{name}_triplet"))
-        # Add an energy monitor just behind the analyzer?
-        # Add the detector tubes
-        inst.add_component(f"{name}_detector_angle", "Arm", RELATIVE=mono, ROTATED=[0, theta, 0], WHEN=detector_when)
-        det = inst.add_component(f"{name}_triplet", "Detector_tubes", RELATIVE="PREVIOUS", WHEN=detector_when,
-                                 EXTEND=detector_extend, AT=[0, 0, analyzer_detector_distance.value])
-        det.set_parameters(**self.mcstas_detector_parameters(origin, f'{name}.dat'))
+        inst.add_component(point, "Arm", ROTATED=[0, 0, 90], RELATIVE=relative,
+                           AT=[0, 0, sample_analyzer_distance.value])
+        # Insert the analyzer rotated by theta (origin is used for calculating coverage angles)
+        self.analyzer.to_mcstasscript(inst, source=relative, relative=point, sink=triplet, theta=theta,
+                                      name=mono, when=analyzer_when, extend=analyzer_extend, origin=origin)
+        # Change the coordinate system by theta -- total scattering angle is then 2theta
+        inst.add_component(orient, "Arm", RELATIVE=mono, ROTATED=[0, theta, 0], WHEN=detector_when)
+        # Insert the detector distance along that arm
+        self.detector.to_mcstasscript(inst, relative=orient, distance=analyzer_detector_distance.value,
+                                      name=triplet, when=detector_when, extend=detector_extend)
