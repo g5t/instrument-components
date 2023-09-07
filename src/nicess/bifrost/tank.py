@@ -6,6 +6,8 @@ class Tank:
     from .channel import Channel
     from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
     from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
+    from mccode.assembler import Assembler
+    from mccode.instr import Instance
 
     channels: tuple[Channel, Channel, Channel, Channel, Channel, Channel, Channel, Channel, Channel]
 
@@ -158,4 +160,25 @@ class Tank:
             name = f"channel_{1 + index}"
             when = f"{1 + index} == secondary_cassette"
             channel.to_mcstasscript(instrument, sample, name=name, when=when, settings=settings)
+
+    def to_mccode(self, assembler: Assembler, sample: Instance, settings: dict = None):
+        from scipp import vector, concat, max
+        origin = vector([0, 0, 0], unit='m')
+        positions = [c.sample_space_angle(origin).to(unit='radian').value for c in self.channels]
+        cov_xy = [c.coverage(origin) for c in self.channels]
+        cov_x = 2 * max(concat([y for _, y in cov_xy], dim='channel')).value
+
+        slits_name = 'slits'
+        declared_positions = f'{slits_name}_positions'
+        assembler.declare_array('double', declared_positions, positions, source=__file__, line=173)
+        slits = assembler.component(slits_name, 'Slit_radial_multi', at=((0, 0, 0,), sample))
+        slits.set_parameters(slit_width=cov_x, offset='slitAngle*DEG2RAD',
+                             number=len(self.channels), radius='slitDistance', height=0.2,
+                             positions=declared_positions)
+        slits.EXTEND("secondary_cassette = (SCATTERED) ? 1 + slit : -1;")
+
+        for index, channel in enumerate(self.channels):
+            name = f"channel_{1 + index}"
+            when = f"{1 + index} == secondary_cassette"
+            channel.to_mccode(assembler, sample, name=name, when=when, settings=settings)
 

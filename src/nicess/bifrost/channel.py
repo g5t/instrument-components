@@ -11,6 +11,8 @@ def variant_parameters(params: dict, default: dict):
 class Channel:
     from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
     from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
+    from mccode.assembler import Assembler
+    from mccode.instr import Instance
     from scipp import Variable
     from .arm import Arm
 
@@ -177,3 +179,23 @@ class Channel:
             arm.to_mcstasscript(inst, cassette, name=arm_name, analyzer_when=arm_when, analyzer_extend=extend,
                                 settings=settings,
                                 detector_when=detector_when, detector_extend=detector_extend)
+
+    def to_mccode(self, assembler: Assembler, relative: Instance, name: str, when: str = None, settings: dict = None):
+        from scipp import concat, all, isclose, vector
+        # For each channel we need to define the local coordinate system, relative to the provided sample
+        origin = vector([0, 0, 0], unit='m')
+        ra0 = self.sample_space_angle(origin).to(unit='degree').value
+        cassette = assembler.component(f"{name}_arm", "Arm", at=((0, 0, 0), relative), rotate=((0, ra0, 0), relative))
+        cassette.WHEN(when)
+
+        for uv in ('int secondary_scattered;', 'int analyzer;', 'int flag;'):
+            assembler.ensure_user_var(uv)
+
+        for arm_index, arm in enumerate(self.pairs):
+            arm_name = f"{name}_{1 + arm_index}"
+            arm_when = f"0 == secondary_scattered && {when}"
+            extend = f"secondary_scattered = (SCATTERED) ? 1 : 0;\nanalyzer = (SCATTERED) ? {1 + arm_index} : 0;"
+            detector_when = f"{when} && {1 + arm_index}==analyzer"
+            detector_extend = f"flag = (SCATTERED) ? 1 : 0;"
+            arm.to_mccode(assembler, cassette, name=arm_name, analyzer_when=arm_when, analyzer_extend=extend,
+                          settings=settings, detector_when=detector_when, detector_extend=detector_extend)

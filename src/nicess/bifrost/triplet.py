@@ -10,6 +10,7 @@ def __is_type__(x, t, name):
 class Triplet:
     from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
     from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
+    from mccode.assembler import Assembler
     from ..detectors import He3Tube
     from scipp import Variable
 
@@ -142,3 +143,10 @@ class Triplet:
         #     # TODO verify how eniius uses data to override entries?
         #     eniius_data = {'type': 'dict', 'value': {'relative/position/in/nx': stream}}
         #     det.extend_METADATA('eniius_data', 'JSON', json.dumps(eniius_data))
+
+    def to_mccode(self, assembler: Assembler, relative: str, distance: float, name: str,
+                  when: str = None, extend: str = None, add_metadata: bool = False):
+        tubes = assembler.component(name, 'Detector_tubes', at=((0, 0, distance), relative),
+                                    parameters=self.mcstas_parameters())
+        tubes.WHEN(when)
+        tubes.EXTEND(extend)
