@@ -10,7 +10,7 @@ def __is_type__(x, t, name):
 class Triplet:
     from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
     from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
-    from mccode.assembler import Assembler
+    from mccode_antlr.assembler import Assembler
     from ..detectors import He3Tube
     from scipp import Variable
 

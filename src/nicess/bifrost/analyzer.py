@@ -4,7 +4,7 @@ from dataclasses import dataclass
 @dataclass
 class Analyzer:
     from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mccode.assembler import Assembler
+    from mccode_antlr.assembler import Assembler
     from ..crystals import Crystal
     from scipp import Variable
 
@@ -102,7 +102,7 @@ class Analyzer:
         return x, y, a
 
     def mcstas_parameters(self, sample: Variable, source: str, sink: str) -> dict:
-        from mccode.instr import Instance
+        from mccode_antlr.instr import Instance
         from ..spatial import is_scipp_vector
         is_scipp_vector(sample, 'sample')
         if isinstance(source, Instance):

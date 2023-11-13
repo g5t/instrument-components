@@ -2,3 +2,12 @@
 *.idea/
 *__pycache__/
 *.egg-info/
+*.step
+*.off
+*.c
+*.instr
+*.ipynb
+build/*
+dist/*
+**/.ipynb_checkpoints/
+mcstas_instrument

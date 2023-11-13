@@ -1,5 +1,6 @@
 from scipp import Variable
 
+
 def known_channel_params():
     from scipp import array, scalar, vector, vectors
     known = dict()

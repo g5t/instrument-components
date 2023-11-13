@@ -11,8 +11,8 @@ def variant_parameters(params: dict, default: dict):
 class Channel:
     from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
     from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
-    from mccode.assembler import Assembler
-    from mccode.instr import Instance
+    from mccode_antlr.assembler import Assembler
+    from mccode_antlr.instr import Instance
     from scipp import Variable
     from .arm import Arm
 

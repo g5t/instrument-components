@@ -4,8 +4,8 @@ from dataclasses import dataclass
 class Arm:
     from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
     from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
-    from mccode.assembler import Assembler
-    from mccode.instr import Instance
+    from mccode_antlr.assembler import Assembler
+    from mccode_antlr.instr import Instance
     from .analyzer import Analyzer
     from .triplet import Triplet
     from scipp import Variable
@@ -215,7 +215,9 @@ class Arm:
         triplet = f'{name}_triplet'         # component name of the detector itself
 
         # Move to the center of the analyzer & reorient for monochromator scattering in vertical plane
-        assembler.component(point, "Arm", at=((0, 0, sample_analyzer_d.value), ref), rotate=((0, 0, 90), ref))
+        arm = assembler.component(point, "Arm", at=((0, 0, sample_analyzer_d.value), ref), rotate=((0, 0, 90), ref))
+        if analyzer_when is not None:
+            arm.WHEN(analyzer_when)
         # Insert the analyzer rotated by theta (origin is used for calculating coverage angles)
         self.analyzer.to_mccode(assembler, source=ref.name, relative=point, sink=triplet, theta=theta, name=mono,
                                 when=analyzer_when, extend=analyzer_extend, origin=origin)
