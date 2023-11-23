@@ -163,6 +163,9 @@ class Tank:
 
     def to_mccode(self, assembler: Assembler, sample: Instance, settings: dict = None):
         from scipp import vector, concat, max
+        from ..mccode import ensure_user_var
+        ensure_user_var(assembler, 'int', 'secondary_cassette', 'Secondary spectrometer analyzer cassette index')
+
         origin = vector([0, 0, 0], unit='m')
         positions = [c.sample_space_angle(origin).to(unit='radian').value for c in self.channels]
         cov_xy = [c.coverage(origin) for c in self.channels]
