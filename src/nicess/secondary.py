@@ -29,7 +29,6 @@ class DirectSecondary:
                 p.breakable()
                 p.text(f'sample at {self.sample_at.value} {self.sample_at.unit}')
 
-
     def __eq__(self, other):
         return all(sd == od for sd, od in zip(self.detectors, other.detectors)) and self.sample_at == other.sample_at
 
@@ -370,7 +369,6 @@ class IndirectSecondary:
         delta_a4 = atan2(y=na, x=ca)
 
         return delta_a4
-
 
     def broadcast_continuous_final_distance(self, detector_index: Variable, ratio: Variable):
         from scipp import sqrt

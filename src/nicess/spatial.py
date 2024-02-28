@@ -1,5 +1,6 @@
 from typing import Any
 from scipp import Variable
+from .decorators import needs
 
 
 def __is_vector__(x: Variable):
@@ -122,6 +123,7 @@ def perpendicular_directions(direction: Variable):
     return horizontal, vertical
 
 
+@needs('cadquery')
 def combine_assembly(**ws):
     from cadquery import Assembly
     a = Assembly()

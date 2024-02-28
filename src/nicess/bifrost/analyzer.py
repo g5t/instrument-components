@@ -1,9 +1,9 @@
 from dataclasses import dataclass
+from ..decorators import needs
 
 
 @dataclass
 class Analyzer:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
     from mccode_antlr.assembler import Assembler
     from ..crystals import Crystal
     from scipp import Variable
@@ -119,7 +119,8 @@ class Analyzer:
                       source=f'"{source}"', sink=f'"{sink}"')
         return params
 
-    def to_mcstasscript(self, inst: ScriptInstrument, source: str, relative: str, sink: str, theta: float,
+    @needs('mcstasscript')
+    def to_mcstasscript(self, inst, source: str, relative: str, sink: str, theta: float,
                         name: str = None, when: str = None, extend: str = None, origin: Variable = None):
         mono = inst.add_component(name, 'Monochromator_Rowland', RELATIVE=relative,
                                   ROTATED=[0, theta, 0], ROTATED_RELATIVE=relative, WHEN=when, EXTEND=extend)

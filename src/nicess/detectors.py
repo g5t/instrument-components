@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from numpy import ndarray
 from scipp import Variable
 from .serialize import vector_deserialize, vector_serialize_types
+from .decorators import needs
 
 
 @dataclass
@@ -243,6 +244,7 @@ class DiscreteTube(DiscreteWire):
     def scalar_deserialization_targets():
         return ('elements', False),  ('radius', True)
 
+    @needs('cadquery')
     def to_cadquery(self, unit=None):
         from cadquery import Workplane
         from scipp import sqrt, dot

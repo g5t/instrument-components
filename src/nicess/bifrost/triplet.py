@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from ..detectors import needs
 
 
 def __is_type__(x, t, name):
@@ -8,8 +9,6 @@ def __is_type__(x, t, name):
 
 @dataclass
 class Triplet:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
     from mccode_antlr.assembler import Assembler
     from ..detectors import He3Tube
     from scipp import Variable
@@ -130,7 +129,8 @@ class Triplet:
                       )
         return params
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: str, distance: float, name: str = None,
+    @needs('mcstasscript')
+    def to_mcstasscript(self, inst, relative: str, distance: float, name: str = None,
                         when: str = None, extend: str = None, add_metadata: bool = False):
         inst.add_component(name, 'Detector_tubes', RELATIVE=relative, WHEN=when, EXTEND=extend, AT=[0, 0, distance])\
             .set_parameters(**self.mcstas_parameters())

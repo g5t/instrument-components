@@ -9,6 +9,7 @@ def simple(x):
         pass
     return x
 
+
 def read_mcc_header_file(filename):
     from numpy import array
     with open(filename, 'r') as file:

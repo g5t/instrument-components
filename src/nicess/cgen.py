@@ -1,8 +1,10 @@
 from numpy import ndarray
 from typing import Union
 from pathlib import Path
+from deprecated import deprecated
 
 
+@deprecated('Obsolete C writer')
 def array_to_c(name: str, data: ndarray):
     # this needs more error checking, but is good enough for now?
     if 'float32' in data.dtype.name:
@@ -98,6 +100,7 @@ def arrays_to_file(arrays: dict[str, ndarray], filename: Union[str, Path], overw
     return write_to_file(arrays_to_cstring(arrays), filename, overwrite=overwrite)
 
 
+@deprecated("Obsolete hack for exporting BIFROST parameters")
 def arrays_to_instr_file(arrays: dict[str, ndarray], filename: Union[str, Path], overwrite=False):
     from setuptools_scm import get_version
     from datetime import datetime

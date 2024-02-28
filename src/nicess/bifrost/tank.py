@@ -1,11 +1,10 @@
 from dataclasses import dataclass
+from ..decorators import needs
 
 @dataclass
 class Tank:
     from scipp import Variable
     from .channel import Channel
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
     from mccode_antlr.assembler import Assembler
     from mccode_antlr.instr import Instance
 
@@ -92,11 +91,9 @@ class Tank:
         vertices = concat([v for v, _ in ves], 'vertices')
         return vertices, edges
 
+    @needs('meshplot')
     def plot(self, unit=None):
-        try:
-            from meshplot import plot
-        except:
-            raise RuntimeError("Install working meshplot to use Tank.plot")
+        from meshplot import plot
         from numpy import array
         vdet, fdet = self.triangulate_detectors(unit=unit)
         p = plot(vdet.values, array(fdet))
@@ -113,6 +110,7 @@ class Tank:
         s = hstack([channel.sample_space_angle(sample).value for channel in self.channels])
         return {'distances': y, 'analyzer': a, 'detector': d, 'channel': s, 'two_theta': t}
 
+    @needs('cadquery')
     def to_cadquery(self, unit=None, add_sphere_at_origin=False):
         from cadquery import Assembly
         if unit is None:
@@ -134,7 +132,8 @@ class Tank:
         from scipp import concat
         return [concat(q, dim='channel') for q in zip(*[c.rtp_parameters(sample) for c in self.channels])]
 
-    def to_mcstasscript(self, instrument: ScriptInstrument, sample: ScriptComponent, settings: dict = None):
+    @needs('mcstasscript')
+    def to_mcstasscript(self, instrument, sample, settings: dict = None):
         from scipp import vector, concat, max
         from ..mcstasscript import ensure_user_var, declare_array
         ensure_user_var(instrument, 'int', 'secondary_cassette', 'Secondary spectrometer analyzer cassette index')

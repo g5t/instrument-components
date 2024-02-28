@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from ..decorators import needs
 
 
 def combined_parameters(user_params: dict, default_params: dict):
@@ -10,7 +11,6 @@ def combined_parameters(user_params: dict, default_params: dict):
 class Tank:
     from scipp import Variable
     from .pack import Pack
-    from ..mcstasscript import ScriptComponent, ScriptInstrument
 
     packs: tuple[Pack, ...]
 
@@ -58,6 +58,7 @@ class Tank:
 
         return Tank(tuple(pack_list))
 
+    @needs('cadquery')
     def to_cadquery(self, unit=None, add_sphere_at_origin=False):
         from cadquery import Assembly
         if unit is None:
@@ -74,7 +75,8 @@ class Tank:
         assembly.name = "CSPEC-secondary"
         return assembly
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent, name: str, parameters: dict):
+    @needs('mcstasscript')
+    def to_mcstasscript(self, inst, relative, name: str, parameters: dict):
         from ..mcstasscript import ensure_user_var
         ensure_user_var(inst, 'int', 'flag', 'Flag indicates detection in a monitor')
 

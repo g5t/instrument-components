@@ -1,10 +1,10 @@
 from dataclasses import dataclass
+from ..decorators import needs
 
 @dataclass
 class Pack:
     from scipp import Variable
     from ..detectors import He3Tube
-    from ..mcstasscript import ScriptComponent, ScriptInstrument
 
     tubes: tuple[He3Tube, ...]
     resistances: Variable
@@ -56,7 +56,8 @@ class Pack:
         t = {f'tube-{idx:2d}': tube.to_cadquery(unit=unit) for idx, tube in enumerate(self.tubes)}
         return combine_assembly(**t)
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent, first_wire_index: int,
+    @needs('mcstasscript')
+    def to_mcstasscript(self, inst, relative, first_wire_index: int,
                         group_name: str, name: str, extend: str, parameters: dict):
         from numpy import hstack
         from scipp import vector

@@ -1,9 +1,8 @@
 from dataclasses import dataclass
+from ..decorators import needs
 
 @dataclass
 class Arm:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
     from mccode_antlr.assembler import Assembler
     from mccode_antlr.instr import Instance
     from .analyzer import Analyzer
@@ -114,6 +113,7 @@ class Arm:
         x, y, angle = self.analyzer.rtp_parameters(sample, out_of_plane)
         return sqrt(dot(sa, sa)), sqrt(dot(ad, ad)), x, y, angle
 
+    @needs('cadquery')
     def to_cadquery(self, unit=None):
         from ..spatial import combine_assembly
         if unit is None:
@@ -156,7 +156,8 @@ class Arm:
     #                   )
     #     return params
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent, name: str = None,
+    @needs('mcstasscript')
+    def to_mcstasscript(self, inst, relative, name: str = None,
                         analyzer_when: str = None, analyzer_extend: str = None,
                         detector_when: str = None, detector_extend: str = None,
                         **kwargs):

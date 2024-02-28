@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from ..decorators import needs
 
 
 def variant_parameters(params: dict, default: dict):
@@ -9,8 +10,6 @@ def variant_parameters(params: dict, default: dict):
 
 @dataclass
 class Channel:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
     from mccode_antlr.assembler import Assembler
     from mccode_antlr.instr import Instance
     from scipp import Variable
@@ -123,6 +122,7 @@ class Channel:
         two_theta = stack([p['two_theta'] for p in parameters], axis=0)  # (5, )
         return {'distances': distances, 'analyzer': analyzers, 'detector': detectors, 'two_theta': two_theta}
 
+    @needs('cadquery')
     def to_cadquery(self, unit=None):
         from cadquery import Assembly, Color
         d_colors = 'tan', 'tan1', 'tan2', 'tan3', 'tan4'
@@ -157,8 +157,8 @@ class Channel:
 
         return sa, ad, x7, y7, a7, x9, y9, a9, ra0
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent,
-                        name: str = None, when: str = None, settings: dict = None):
+    @needs('mcstasscript')
+    def to_mcstasscript(self, inst, relative, name: str = None, when: str = None, settings: dict = None):
         from scipp import concat, all, isclose, vector
         from ..mcstasscript import ensure_user_var
         # For each channel we need to define the local coordinate system, relative to the provided sample

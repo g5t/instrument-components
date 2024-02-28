@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from numpy import ndarray
 from scipp import Variable
 from .serialize import vector_deserialize, vector_serialize_types
+from .detectors import needs
 
 
 @dataclass
@@ -164,6 +165,7 @@ class Crystal(IdealCrystal):
                  [3, 0, 4], [3, 4, 7], [2, 3, 7], [2, 7, 6], [4, 5, 6], [4, 6, 7]]
         return vertices.to(unit=unit) + self.position.to(unit=unit), faces
 
+    @needs('cadquery')
     def to_cadquery(self, unit=None):
         from cadquery import Workplane, Solid, Vector
         from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
@@ -242,4 +244,4 @@ class Crystal(IdealCrystal):
 
     def mcstas_parameters(self):
         from numpy import hstack
-        return hstack(self.position.value, self.shape.value)
+        return hstack((self.position.value, self.shape.value))
