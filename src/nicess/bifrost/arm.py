@@ -228,3 +228,100 @@ class Arm:
         # Insert the detector distance along that arm
         self.detector.to_mccode(assembler, relative=orient, distance=analyzer_detector_distance.value, name=triplet,
                                 when=detector_when, extend=detector_extend)
+
+    def wrong_flight_paths(self, sample: Variable | None = None, central: bool = False, specular: bool = True):
+        """Find the flight paths from the sample position to each analyzer blade to the extremes of each tube"""
+        # WARNING this method is _only_ correct of the _CENTRAL_ tube! It IS WRONG for the outer tubes
+        from scipp import concat, vector, vectors, dot, sqrt
+        if sample is None:
+            sample = vector([0, 0, 0], unit='m')
+
+        tau = self.analyzer.central_blade.tau if central else concat([b.tau for b in self.analyzer.blades], dim='blade')
+        n = tau / sqrt(dot(tau, tau))
+        a = self.analyzer.central_blade.position if central else concat([b.position for b in self.analyzer.blades], dim='blade')
+        s = sample - a
+
+        tube_ends = concat([concat((t.at, t.to), dim='length') for t in self.detector.tubes], dim='tube')
+        if specular:
+            tube_ends = tube_ends['tube', 1]
+        d = tube_ends - a
+
+        # The distances from the reflection plane of the sample and the detectors
+        s_n = dot(s, n)
+        d_n = dot(d, n)
+        # the _image_ of the vector d, had no reflection taken place at the analyzer
+        # differs from d only by the sign of its dot product with the crystal normal
+        dp = d - 2 * d_n * n
+
+        # the reflection points:
+        refl_points = (d_n * s + s_n * dp) / (d_n + s_n) + a
+
+        if central:
+            # Each ray goes from the sample to a reflection point and on to the associated tube_end
+            # The challenge is flattening both refl_points and tube_ends in the same way ...
+            # (this is probably overkill)
+            refl_points = refl_points.transpose(tube_ends.dims)
+            rp = refl_points.flatten(to='vertex')
+            tp = tube_ends.flatten(to='vertex')
+            verts = concat((sample, rp, tp), dim='vertex')
+            npaths = rp.sizes['vertex']
+            paths = [[0, 1 + i, 1 + npaths + i] for i in range(npaths)]
+        else:
+            # there are N paths from the sample to _each_ tube_end!
+            refl_points = refl_points.transpose([*tube_ends.dims, 'blade'])
+            rp = refl_points.flatten(to='vertex')
+            tp = tube_ends.flatten(to='vertex')
+            verts = concat((sample, rp, tp), dim='vertex')
+            n_ends = tp.sizes['vertex']
+            n_blades = refl_points.sizes['blade']
+            paths = [[0, 1 + i * n_blades + j, 1 + n_ends * n_blades + i] for i in range(n_ends) for j in range(n_blades)]
+        return verts, paths
+
+    def flight_paths(self, sample: Variable | None = None, central: bool = False, specular: bool = True):
+        from scipp import concat, vector, dot, sqrt
+        if sample is None:
+            sample = vector([0, 0, 0], unit='m')
+        # the scattering plane normal is the rowland cylinder axis direction
+        # the Crystal object knows this only through its orientation quaternion, that makes [0, 1, 0] point along it
+        center = self.analyzer.central_blade
+        yhat = center.orientation * vector([0, 1, 0])
+
+        a = (center.position if central else concat([b.position for b in self.analyzer.blades], dim='blade')) - sample
+
+        tube_ends = concat([concat((t.at, t.to), dim='length') for t in self.detector.tubes], dim='tube')
+        if specular:
+            tube_ends = tube_ends['tube', 1]
+        d = tube_ends - sample
+
+        dy = dot(d, yhat)
+        f = d - a - dy * yhat  # the vector from the analyzer to the per-tube detector _IN THE SCATTERING PLANE_
+        # TODO consider also taking off `(a * yhat) * yhat` if you want to allow for misalignment of the analyzer
+        sample_analyzer_dist = sqrt(dot(a, a))
+        analyzer_detector_dist = sqrt(dot(f, f))
+        by = sample_analyzer_dist / (sample_analyzer_dist + analyzer_detector_dist) * dy
+        b = a + by * yhat
+
+        refl_points = b + sample
+
+        if central:
+            # Each ray goes from the sample to a reflection point and on to the associated tube_end
+            # The challenge is flattening both refl_points and tube_ends in the same way ...
+            # (this is probably overkill)
+            refl_points = refl_points.transpose(tube_ends.dims)
+            rp = refl_points.flatten(to='vertex')
+            tp = tube_ends.flatten(to='vertex')
+            verts = concat((sample, rp, tp), dim='vertex')
+            npaths = rp.sizes['vertex']
+            paths = [[0, 1 + i, 1 + npaths + i] for i in range(npaths)]
+        else:
+            # there are N paths from the sample to _each_ tube_end!
+            refl_points = refl_points.transpose([*tube_ends.dims, 'blade'])
+            rp = refl_points.flatten(to='vertex')
+            tp = tube_ends.flatten(to='vertex')
+            verts = concat((sample, rp, tp), dim='vertex')
+            n_ends = tp.sizes['vertex']
+            n_blades = refl_points.sizes['blade']
+            paths = [[0, 1 + i * n_blades + j, 1 + n_ends * n_blades + i] for i in range(n_ends) for j in range(n_blades)]
+        return verts, paths
+
+

@@ -5,7 +5,9 @@ channels:
   - cadquery
   - scipp
 dependencies:
+  - openjdk
   - scipp
+  - plopp
   - cadquery
   - meshplot
   - h5py
@@ -17,3 +19,4 @@ dependencies:
   - pip:
       - schemdraw
       - mccode-antlr
+      - deprecated
