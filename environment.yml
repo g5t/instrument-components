@@ -16,6 +16,8 @@ dependencies:
   - matplotlib
   - gitpython
   - setuptools_scm
+  - pandas
+  - openpyxl
   - pip:
       - schemdraw
       - mccode-antlr

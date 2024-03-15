@@ -285,6 +285,7 @@ class Arm:
         # the Crystal object knows this only through its orientation quaternion, that makes [0, 1, 0] point along it
         center = self.analyzer.central_blade
         yhat = center.orientation * vector([0, 1, 0])
+        print(f'orientation DType {center.orientation.dtype}')
 
         a = (center.position if central else concat([b.position for b in self.analyzer.blades], dim='blade')) - sample
 
