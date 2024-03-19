@@ -59,32 +59,47 @@ def _fix_nboa(table):
     To match reality, replace W03-01-011, W03-01-12 by W03-01-01, and update the parameters for those and
     W03-01-02 and W03-01-03.
     """
-    from numpy import argwhere
+    from numpy import argwhere, sqrt
     element, chi, phi = [_column_named(table, x) for x in ('Element', 'chi', 'phi')]
     x0, y0, z0 = [_column_named(table, f'{x} start') for x in ('x', 'y', 'z')]
     x1, y1, z1 = [_column_named(table, f'{x} end') for x in ('x', 'y', 'z')]
     length, hor, ver = [_column_named(table, x) for x in ('length', 'hor', 'vert')]
     width, height = [_column_named(table, x) for x in ('width exit', 'height exit')]
+    entry_height = _column_named(table, 'height entry')
 
     # The parameters for the NBOA guide are (maybe) wrong -- update the row(s) now
-    names = 'W03-01-011', 'W03-01-012', 'W03-01-02', 'W03-01-03'
-    one_one, one_two, two, three = [argwhere(table[element] == name)[0, 0] for name in names]
-    for x, y in zip(names, (one_one, one_two, two, three)):
-        print(f'{x} -> {y}')
+    names = 'W03-01-011', 'W03-01-012', 'W03-01-02', 'W03-01-03', 'W03-09-01'
+    one_one, one_two, two, three, last = [argwhere(table[element] == name)[0, 0] for name in names]
 
     # prepare to copy-over W03-01-012 parameters missing from W03-01-011
     one_pars = {k: table[k][one_two] for k in (hor, ver, width, height)}
     one_pars[element] = 'W03-01-01'
 
-    for el, c, p in zip([one_one, two, three], [-0.0123448, -0.037, -0.074], [-0.0048611, -0.015, -0.030]):
-        table.loc[el, [chi, phi]] = [c, p]
-
-    table.loc[one_one, [x0, y0, z0, x1, y1, z1]] = [1879.94, -0.005, 0, 2880.94, 0.0799, -0.22]
-    table.loc[two, [x0, y0, z0, x1, y1, z1, length]] = [2880.94, 0.0799, -0.22, 3881.94, 0.3347, -0.87, 1000.0]
-    table.loc[three, [x0, y0, z0, x1, y1, z1]] = [3881.94, 0.3347, -0.87, 5361.94, 1.1060, -2.77]
+    table.loc[[one_one, two, three], [chi, phi]] = [[-0.0123448, -0.0048611], [-0.037, -0.015], [-0.074, -0.030]]
+    table.loc[[one_one, two, three], [x0, y0, z0, x1, y1, z1]] = [
+        [1879.94, -0.005, 0, 2880.94, 0.0799, -0.22],
+        [2880.94, 0.0799, -0.22, 3881.94, 0.3347, -0.87],
+        [3881.94, 0.3347, -0.87, 5361.94, 1.1060, -2.77]
+    ]
+    table.loc[one_one, [length]] = [table[length][one_one] + table[length][one_two]]
+    table.loc[two, [length]] = [1000.]
 
     for k, v in one_pars.items():
         table.loc[one_one, [k]] = [v]
+
+    # The last guide element's height calculation differs from all others and includes invalid references,
+    # This is a best-guess replacement for the expected heights:
+    f176 = 1.76
+
+    def h_eq(x):
+        e3h_start = 124702.42
+        e3h_a = 45026.5
+        e3h_b = 73.89
+        e3h_c = 0.25
+        aj141 = 0  # TODO Find out what $AJ$141 _SHOULD HAVE BEEN_
+        return sqrt((1 - (x - e3h_start - e3h_c)**2 / e3h_a ** 2) * e3h_b**2) + aj141
+
+    table.loc[last, [entry_height, height]] = [h_eq(table[x0][last]),  h_eq(table[x1][last])]
 
     new_table = table.drop(index=one_two)
     return new_table
@@ -152,14 +167,17 @@ def _entry_exit_interpolator(values, name, unit):
 
 def build_guide(xlsx_file):
     from scipp import isfinite
+    from scipp.spatial import linear_transform
     from ..guide import OFFGuide
     info = read_xlsx(xlsx_file)
     n_elements = info['element'].sizes['element']
 
+    # ICS (x, y, z) -> McSTAS (z, x, y)
+    r = linear_transform(value=[[0, 1, 0], [0, 0, 1], [1, 0, 0]])
+
     elements = {}
     for i in range(n_elements):
         values = info['element', i]
-        print(values)
         if not isfinite(values['length'].data):
             continue
         elements[values['element'].value] = OFFGuide.from_parameters(
@@ -172,7 +190,8 @@ def build_guide(xlsx_file):
             length=values['length'].data.to(unit='m'),
             radius_h=values['curvature_horizontal'].data.to(unit='m'),
             radius_v=values['curvature_vertical'].data.to(unit='m'),
-            at=values['ics_at'].data.to(unit='m'),  # FIXME This should be adjusted for McStas coordinate system
+            at=r * values['ics_at'].data.to(unit='m'),  # FIXME This should be adjusted for McStas coordinate system
+            # at=values['mcstas_at'].data.to(unit='m'),
             chi=values['chi'].data.to(unit='degree'),
             phi=values['phi'].data.to(unit='degree')
         )
