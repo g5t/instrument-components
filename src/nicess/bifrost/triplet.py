@@ -8,8 +8,6 @@ def __is_type__(x, t, name):
 
 @dataclass
 class Triplet:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
     from mccode_antlr.assembler import Assembler
     from ..detectors import He3Tube
     from scipp import Variable
@@ -130,7 +128,7 @@ class Triplet:
                       )
         return params
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: str, distance: float, name: str = None,
+    def to_mcstasscript(self, inst, relative: str, distance: float, name: str = None,
                         when: str = None, extend: str = None, add_metadata: bool = False):
         inst.add_component(name, 'Detector_tubes', RELATIVE=relative, WHEN=when, EXTEND=extend, AT=[0, 0, distance])\
             .set_parameters(**self.mcstas_parameters())
@@ -145,8 +143,13 @@ class Triplet:
         #     det.extend_METADATA('eniius_data', 'JSON', json.dumps(eniius_data))
 
     def to_mccode(self, assembler: Assembler, relative: str, distance: float, name: str,
-                  when: str = None, extend: str = None, add_metadata: bool = False):
-        tubes = assembler.component(name, 'Detector_tubes', at=((0, 0, distance), relative),
-                                    parameters=self.mcstas_parameters())
+                  when: str = None, extend: str = None, add_metadata: bool = False,
+                  component: str = None, parameters: dict = None):
+        if component is None:
+            component = 'Detector_tubes'
+        base_parameters = self.mcstas_parameters()
+        if parameters is not None:
+            base_parameters.update(parameters)
+        tubes = assembler.component(name, component, at=((0, 0, distance), relative), parameters=base_parameters)
         tubes.WHEN(when)
         tubes.EXTEND(extend)

@@ -16,9 +16,9 @@ dependencies = ["scipp>=0.16",  "numpy>=1.23.3", "scipy"]
 optional-dependencies = {io=["h5py>=3.7.0", ], test=["pytest", "pytest-cov[all]"]}
 
 [project.urls]
-"Homepage" = "https://g5t.github.io/nicess"
-"Repository" = "https://github.com/g5t/nicess"
-"Bug Tracker" = "https://github.com/g5t/nicess/issues"
+"Homepage" = "https://g5t.github.io/instrument-components"
+"Repository" = "https://github.com/g5t/instrument-components"
+"Bug Tracker" = "https://github.com/g5t/instrument-components/issues"
 
 [tool.pytest.ini_options]
 minversion = "6.0"

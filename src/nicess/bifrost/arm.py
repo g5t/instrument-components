@@ -2,8 +2,6 @@ from dataclasses import dataclass
 
 @dataclass
 class Arm:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
     from mccode_antlr.assembler import Assembler
     from mccode_antlr.instr import Instance
     from .analyzer import Analyzer
@@ -156,7 +154,7 @@ class Arm:
     #                   )
     #     return params
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent, name: str = None,
+    def to_mcstasscript(self, inst, relative, name: str = None,
                         analyzer_when: str = None, analyzer_extend: str = None,
                         detector_when: str = None, detector_extend: str = None,
                         **kwargs):
@@ -226,4 +224,6 @@ class Arm:
         det_angle.WHEN(detector_when)
         # Insert the detector distance along that arm
         self.detector.to_mccode(assembler, relative=orient, distance=analyzer_detector_distance.value, name=triplet,
-                                when=detector_when, extend=detector_extend)
+                                when=detector_when, extend=detector_extend,
+                                component=kwargs.get('detector_component', None),
+                                parameters=kwargs.get('detector_parameters', None))

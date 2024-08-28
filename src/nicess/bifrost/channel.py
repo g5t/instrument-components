@@ -9,8 +9,6 @@ def variant_parameters(params: dict, default: dict):
 
 @dataclass
 class Channel:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
     from mccode_antlr.assembler import Assembler
     from mccode_antlr.instr import Instance
     from scipp import Variable
@@ -157,7 +155,7 @@ class Channel:
 
         return sa, ad, x7, y7, a7, x9, y9, a9, ra0
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent,
+    def to_mcstasscript(self, inst, relative,
                         name: str = None, when: str = None, settings: dict = None):
         from scipp import concat, all, isclose, vector
         from ..mcstasscript import ensure_user_var
@@ -180,7 +178,7 @@ class Channel:
                                 settings=settings,
                                 detector_when=detector_when, detector_extend=detector_extend)
 
-    def to_mccode(self, assembler: Assembler, relative: Instance, name: str, when: str = None, settings: dict = None):
+    def to_mccode(self, assembler: Assembler, relative: Instance, name: str, when: str = None, settings: dict = None, **kwargs):
         from scipp import concat, all, isclose, vector
         # For each channel we need to define the local coordinate system, relative to the provided sample
         origin = vector([0, 0, 0], unit='m')
@@ -198,4 +196,4 @@ class Channel:
             detector_when = f"{when} && {1 + arm_index}==analyzer"
             detector_extend = f"flag = (SCATTERED) ? 1 : 0;"
             arm.to_mccode(assembler, cassette, name=arm_name, analyzer_when=arm_when, analyzer_extend=extend,
-                          settings=settings, detector_when=detector_when, detector_extend=detector_extend)
+                          settings=settings, detector_when=detector_when, detector_extend=detector_extend, **kwargs)

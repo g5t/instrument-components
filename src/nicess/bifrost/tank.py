@@ -4,8 +4,6 @@ from dataclasses import dataclass
 class Tank:
     from scipp import Variable
     from .channel import Channel
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
     from mccode_antlr.assembler import Assembler
     from mccode_antlr.instr import Instance
 
@@ -134,7 +132,7 @@ class Tank:
         from scipp import concat
         return [concat(q, dim='channel') for q in zip(*[c.rtp_parameters(sample) for c in self.channels])]
 
-    def to_mcstasscript(self, instrument: ScriptInstrument, sample: ScriptComponent, settings: dict = None):
+    def to_mcstasscript(self, instrument, sample, settings: dict = None):
         from scipp import vector, concat, max
         from ..mcstasscript import ensure_user_var, declare_array
         ensure_user_var(instrument, 'int', 'secondary_cassette', 'Secondary spectrometer analyzer cassette index')
@@ -161,7 +159,7 @@ class Tank:
             when = f"{1 + index} == secondary_cassette"
             channel.to_mcstasscript(instrument, sample, name=name, when=when, settings=settings)
 
-    def to_mccode(self, assembler: Assembler, sample: Instance, settings: dict = None):
+    def to_mccode(self, assembler: Assembler, sample: Instance, settings: dict = None, **kwargs):
         from scipp import vector, concat, max
         from ..mccode import ensure_user_var
         ensure_user_var(assembler, 'int', 'secondary_cassette', 'Secondary spectrometer analyzer cassette index')
@@ -183,5 +181,5 @@ class Tank:
         for index, channel in enumerate(self.channels):
             name = f"channel_{1 + index}"
             when = f"{1 + index} == secondary_cassette"
-            channel.to_mccode(assembler, sample, name=name, when=when, settings=settings)
+            channel.to_mccode(assembler, sample, name=name, when=when, settings=settings, **kwargs)
 
