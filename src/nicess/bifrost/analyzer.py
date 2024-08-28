@@ -3,8 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Analyzer:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
+    from mccode_antlr.assembler import Assembler
     from ..crystals import Crystal
     from scipp import Variable
 
@@ -60,10 +59,10 @@ class Analyzer:
         from ..spatial import combine_extremes
         vs = [blade.extreme_path_corners(horizontal, vertical, unit=unit) for blade in self.blades]
         return combine_extremes(vs, horizontal, vertical)
-
-    def mcstas_parameters(self):
-        from numpy import hstack
-        return hstack((len(self.blades), self.central_blade.mcstas_parameters))
+    #
+    # def mcstas_parameters(self):
+    #     from numpy import hstack
+    #     return hstack((len(self.blades), self.central_blade.mcstas_parameters))
 
     def to_cadquery(self, unit=None):
         from ..spatial import combine_assembly
@@ -102,8 +101,15 @@ class Analyzer:
         return x, y, a
 
     def mcstas_parameters(self, sample: Variable, source: str, sink: str) -> dict:
+        from mccode_antlr.instr import Instance
         from ..spatial import is_scipp_vector
         is_scipp_vector(sample, 'sample')
+        if isinstance(source, Instance):
+            source = source.name
+        if isinstance(sink, Instance):
+            sink = sink.name
+        if not isinstance(source, str) or not isinstance(sink, str):
+            raise ValueError(f'The source and sink are expected to be str values not {type(source)} and {type(sink)}')
 
         perp_q, perp_plane, parallel_q = self.central_blade.shape.to(unit='m').value
         hor_cov, ver_cov = self.coverage(sample)
@@ -112,9 +118,17 @@ class Analyzer:
                       source=f'"{source}"', sink=f'"{sink}"')
         return params
 
-
-    def to_mcstasscript(self, inst: ScriptInstrument, source: str, relative: str, sink: str, theta: float,
+    def to_mcstasscript(self, inst, source: str, relative: str, sink: str, theta: float,
                         name: str = None, when: str = None, extend: str = None, origin: Variable = None):
         mono = inst.add_component(name, 'Monochromator_Rowland', RELATIVE=relative,
                                   ROTATED=[0, theta, 0], ROTATED_RELATIVE=relative, WHEN=when, EXTEND=extend)
         mono.set_parameters(**self.mcstas_parameters(origin, source, sink))
+
+    def to_mccode(self, assembler: Assembler, source: str, relative: str, sink: str, theta: float, name: str,
+                  when: str = None, extend: str = None, origin: Variable = None):
+        mono = assembler.component(name, 'Monochromator_Rowland',
+                                   at=((0, 0, 0), relative), rotate=((0, theta, 0), relative))
+        mono.set_parameters(**self.mcstas_parameters(origin, source, sink))
+        mono.WHEN(when)
+        mono.EXTEND(extend)
+

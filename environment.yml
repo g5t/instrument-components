@@ -16,3 +16,4 @@ dependencies:
   - setuptools_scm
   - pip:
       - schemdraw
+      - mccode@git+ssh://git@github.com/g5t/mccode-antlr.git

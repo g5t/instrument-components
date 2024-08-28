@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Arm:
-    from mcstasscript.interface.instr import McStas_instr as ScriptInstrument
-    from mcstasscript.helper.mcstas_objects import Component as ScriptComponent
+    from mccode_antlr.assembler import Assembler
+    from mccode_antlr.instr import Instance
     from .analyzer import Analyzer
     from .triplet import Triplet
     from scipp import Variable
@@ -154,7 +154,7 @@ class Arm:
     #                   )
     #     return params
 
-    def to_mcstasscript(self, inst: ScriptInstrument, relative: ScriptComponent, name: str = None,
+    def to_mcstasscript(self, inst, relative, name: str = None,
                         analyzer_when: str = None, analyzer_extend: str = None,
                         detector_when: str = None, detector_extend: str = None,
                         **kwargs):
@@ -188,3 +188,42 @@ class Arm:
         # Insert the detector distance along that arm
         self.detector.to_mcstasscript(inst, relative=orient, distance=analyzer_detector_distance.value,
                                       name=triplet, when=detector_when, extend=detector_extend)
+
+    def to_mccode(self, assembler: Assembler, ref: Instance, name: str,
+                  analyzer_when: str = None, analyzer_extend: str = None,
+                  detector_when: str = None, detector_extend: str = None, **kwargs):
+        from scipp import concat, all, isclose, vector, dot, sqrt, atan2
+        # For each channel we need to define the local coordinate system, relative to the provided sample
+        origin = vector([0, 0, 0], unit='m')
+
+        sa_vec = self.analyzer.central_blade.position
+        ad_vec = (self.detector.tubes[1].at + self.detector.tubes[1].to) / 2 - sa_vec
+
+        sample_analyzer_d = sqrt(dot(sa_vec, sa_vec)).to(unit='m')
+        analyzer_detector_distance = sqrt(dot(ad_vec, ad_vec)).to(unit='m')
+
+        x = dot(ad_vec, sa_vec / sample_analyzer_d)
+        y = dot(ad_vec, vector([0, 0, 1]))
+        two_theta = atan2(y=y, x=x).to(unit='degree').value
+        theta = two_theta / 2
+
+        point = f'{name}_analyzer_point'    # component name of the location of the analyzer
+        mono = f'{name}_monochromator'      # component name of the analyzer itself
+        orient = f'{name}_detector_angle'   # component name of the oriented arm pointing at the detector
+        triplet = f'{name}_triplet'         # component name of the detector itself
+
+        # Move to the center of the analyzer & reorient for monochromator scattering in vertical plane
+        arm = assembler.component(point, "Arm", at=((0, 0, sample_analyzer_d.value), ref), rotate=((0, 0, 90), ref))
+        if analyzer_when is not None:
+            arm.WHEN(analyzer_when)
+        # Insert the analyzer rotated by theta (origin is used for calculating coverage angles)
+        self.analyzer.to_mccode(assembler, source=ref.name, relative=point, sink=triplet, theta=theta, name=mono,
+                                when=analyzer_when, extend=analyzer_extend, origin=origin)
+        # Change the coordinate system by theta -- total scattering angle is then 2theta
+        det_angle = assembler.component(orient, "Arm", at=((0, 0, 0), mono), rotate=((0, theta, 0), mono))
+        det_angle.WHEN(detector_when)
+        # Insert the detector distance along that arm
+        self.detector.to_mccode(assembler, relative=orient, distance=analyzer_detector_distance.value, name=triplet,
+                                when=detector_when, extend=detector_extend,
+                                component=kwargs.get('detector_component', None),
+                                parameters=kwargs.get('detector_parameters', None))
